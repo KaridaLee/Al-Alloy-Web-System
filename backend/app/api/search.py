@@ -61,9 +61,10 @@ def normalize_detail_item(item: dict):
 
 @router.get("")
 def search_records(
-    keyword: str = Query(...),
-    field: str = Query("all"),
-    sheet: str = Query(""),
+    furnace_no: str = Query("", description="炉号"),
+    grade_no: str = Query("", description="牌号"),
+    start_time: str = Query("", description="起始时间"),
+    sheet: str = Query("", description="工作表"),
     page: int = Query(1),
     page_size: int = Query(20)
 ):
@@ -83,25 +84,37 @@ def search_records(
         for m in metas:
             table_name = m["table_name"]
 
+            pragma_cols = conn.execute(text(f'PRAGMA table_info("{table_name}")')).mappings().all()
+            cols = [c["name"] for c in pragma_cols]
+
             where_clauses = []
-            params = {"kw": f"%{keyword}%"}
+            params = {}
 
-            if field == "furnace":
-                where_clauses.append('"炉号" LIKE :kw')
-            elif field == "grade":
-                where_clauses.append('"牌号" LIKE :kw')
-            else:
-                clauses = []
-                pragma_cols = conn.execute(text(f'PRAGMA table_info("{table_name}")')).mappings().all()
-                cols = [c["name"] for c in pragma_cols]
-                for c in cols:
-                    if c == "__row_key":
-                        continue
-                    clauses.append(f'"{c}" LIKE :kw')
-                if clauses:
-                    where_clauses.append("(" + " OR ".join(clauses) + ")")
+            if furnace_no.strip() and "炉号" in cols:
+                where_clauses.append('"炉号" LIKE :furnace_no')
+                params["furnace_no"] = f"%{furnace_no.strip()}%"
 
-            where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+            if grade_no.strip() and "牌号" in cols:
+                where_clauses.append('"牌号" LIKE :grade_no')
+                params["grade_no"] = f"%{grade_no.strip()}%"
+
+            # 时间格式示例：2026-03-11T06:14:36
+            # T只是分隔符，没有特别意义，直接按字符串比较即可
+            time_col = None
+            if "检测时间时间" in cols:
+                time_col = "检测时间时间"
+            elif "检测时间" in cols:
+                time_col = "检测时间"
+
+            if start_time.strip() and time_col:
+                where_clauses.append(f'"{time_col}" >= :start_time')
+                params["start_time"] = start_time.strip()
+
+            # 如果没输入任何条件，不返回整库全部数据，避免太重
+            if not where_clauses:
+                continue
+
+            where_sql = " AND ".join(where_clauses)
 
             sql = f'''
             SELECT "__row_key", "__source_file", "__source_sheet", *

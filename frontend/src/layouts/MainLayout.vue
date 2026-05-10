@@ -1,9 +1,14 @@
 <template>
   <el-container style="height: 100vh;">
-    <el-aside width="240px" style="background:linear-gradient(180deg,#0f172a,#1e293b);color:#fff;">
+    <!-- 桌面端侧边栏 -->
+    <el-aside
+      v-if="!isMobile"
+      width="240px"
+      style="background:linear-gradient(180deg,#0f172a,#1e293b);color:#fff;"
+    >
       <div style="padding:22px 20px;border-bottom:1px solid rgba(255,255,255,.08);">
         <div style="font-size:20px;font-weight:800;">铝锭成分台账系统</div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:6px;">一体化查询面板</div>
+        <div style="font-size:12px;color:#94a3b8;margin-top:6px;">本地一体化查询面板</div>
       </div>
 
       <el-menu
@@ -25,15 +30,73 @@
       </el-menu>
     </el-aside>
 
+    <!-- 手机端抽屉菜单 -->
+    <el-drawer
+      v-model="mobileMenuVisible"
+      direction="ltr"
+      size="220px"
+      :with-header="false"
+      v-if="isMobile"
+    >
+      <div style="padding:22px 20px;border-bottom:1px solid #e2e8f0;">
+        <div style="font-size:20px;font-weight:800;color:#0f172a;">铝锭成分台账系统</div>
+        <div style="font-size:12px;color:#64748b;margin-top:6px;">本地一体化查询面板</div>
+      </div>
+
+      <el-menu
+        router
+        :default-active="$route.path"
+        @select="mobileMenuVisible = false"
+      >
+        <el-menu-item index="/">
+          <span>首页总览</span>
+        </el-menu-item>
+        <el-menu-item index="/search">
+          <span>数据搜索</span>
+        </el-menu-item>
+        <el-menu-item index="/settings">
+          <span>系统设置</span>
+        </el-menu-item>
+      </el-menu>
+    </el-drawer>
+
     <el-container>
-      <el-header style="background:#fff;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <div style="font-size:18px;font-weight:700;color:#0f172a;">服务控制台</div>
+      <el-header
+        style="
+          background:#fff;
+          border-bottom:1px solid #e2e8f0;
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+          padding:0 16px;
+        "
+      >
+        <div style="display:flex;align-items:center;gap:12px;">
+          <el-button
+            v-if="isMobile"
+            circle
+            @click="mobileMenuVisible = true"
+          >
+            ☰
+          </el-button>
+
+          <div>
+            <div style="font-size:18px;font-weight:700;color:#0f172a;">本地服务控制台</div>
+            <div class="sub-title" style="max-width:220px;word-break:break-all;">
+              监听地址：{{ hostText }}
+            </div>
+          </div>
         </div>
+
         <el-tag type="success" size="large">运行中</el-tag>
       </el-header>
 
-      <el-main style="padding:20px 24px;background:#f8fafc;">
+      <el-main
+        :style="{
+          padding: isMobile ? '12px' : '20px 24px',
+          background: '#f8fafc'
+        }"
+      >
         <router-view />
       </el-main>
     </el-container>
@@ -41,13 +104,26 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { getSystemStatus } from '../api'
 
 const hostText = ref('加载中...')
+const isMobile = ref(false)
+const mobileMenuVisible = ref(false)
+
+const checkMobile = () => {
+  isMobile.value = window.innerWidth <= 768
+}
 
 onMounted(async () => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+
   const { data } = await getSystemStatus()
   hostText.value = `${data.host}:${data.port}`
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>

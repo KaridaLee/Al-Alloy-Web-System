@@ -3,22 +3,34 @@
     <div class="page-title">数据搜索</div>
 
     <el-card class="block-card">
-      <el-form inline>
-        <el-form-item label="关键词">
+      <el-form :inline="!isMobile" label-width="70px">
+        <el-form-item label="炉号">
           <el-input
-            v-model="keyword"
-            placeholder="输入炉号或牌号"
-            style="width:260px"
+            v-model="furnaceNo"
+            placeholder="输入炉号"
+            :style="{ width: isMobile ? '100%' : '220px' }"
             @keyup.enter="handleSearch"
           />
         </el-form-item>
 
-        <el-form-item label="字段范围">
-          <el-select v-model="field" style="width:160px">
-            <el-option label="全部字段" value="all" />
-            <el-option label="炉号" value="furnace" />
-            <el-option label="牌号" value="grade" />
-          </el-select>
+        <el-form-item label="牌号">
+          <el-input
+            v-model="gradeNo"
+            placeholder="输入牌号"
+            :style="{ width: isMobile ? '100%' : '220px' }"
+            @keyup.enter="handleSearch"
+          />
+        </el-form-item>
+
+        <el-form-item label="时间">
+          <el-date-picker
+            v-model="startTime"
+            type="datetime"
+            placeholder="选择起始时间"
+            format="YYYY-MM-DD HH:mm:ss"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            :style="{ width: isMobile ? '100%' : '240px' }"
+          />
         </el-form-item>
 
         <el-form-item>
@@ -43,7 +55,7 @@
         <el-table-column prop="炉号" label="炉号" width="120" />
         <el-table-column prop="牌号" label="牌号" width="180" />
         <el-table-column prop="批次号" label="批次号" width="160" />
-        <el-table-column prop="检测时间时间" label="检测时间" width="180" />
+        <el-table-column prop="检测时间时间" label="检测时间" width="190" />
         <el-table-column label="判定" width="100">
           <template #default="{ row }">
             <el-tag :type="row['判定'] === '合格' ? 'success' : 'warning'">
@@ -52,6 +64,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="备注" label="备注" />
+        <el-table-column prop="__source_file" label="来源文件" width="220" />
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click="showDetail(row)">详情</el-button>
@@ -76,13 +89,15 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { searchRecords, getRecordDetail } from '../api'
 import RecordDetailDrawer from '../components/RecordDetailDrawer.vue'
 
-const keyword = ref('')
-const field = ref('all')
+const furnaceNo = ref('')
+const gradeNo = ref('')
+const startTime = ref('')
+
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -90,26 +105,34 @@ const items = ref([])
 
 const drawerVisible = ref(false)
 const currentRecord = ref(null)
+const isMobile = ref(false)
+
+const checkMobile = () => {
+  isMobile.value = window.innerWidth <= 768
+}
 
 const handleSearch = async () => {
-  if (!keyword.value.trim()) {
-    ElMessage.warning('请输入搜索关键词')
+  if (!furnaceNo.value.trim() && !gradeNo.value.trim() && !startTime.value) {
+    ElMessage.warning('请至少输入一个搜索条件')
     return
   }
 
   const { data } = await searchRecords({
-    keyword: keyword.value,
-    field: field.value,
+    furnace_no: furnaceNo.value,
+    grade_no: gradeNo.value,
+    start_time: startTime.value,
     page: page.value,
     page_size: pageSize.value
   })
+
   total.value = data.total
   items.value = data.items
 }
 
 const handleReset = () => {
-  keyword.value = ''
-  field.value = 'all'
+  furnaceNo.value = ''
+  gradeNo.value = ''
+  startTime.value = ''
   page.value = 1
   items.value = []
   total.value = 0
@@ -120,8 +143,16 @@ const showDetail = async (row) => {
     sheet: row._sheet_name,
     row_key: row.__row_key
   })
-
   currentRecord.value = data.item
   drawerVisible.value = true
 }
+
+onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
+})
 </script>

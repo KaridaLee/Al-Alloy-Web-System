@@ -43,8 +43,6 @@ export const pingImport = () => http.get('/api/import/ping')
 export const syncAllExcels = () => http.post('/api/import/sync-all')
 export const searchRecords = (params) => http.get('/api/search', { params })
 export const getRecordDetail = (params) => http.get('/api/search/detail', { params })
-
-// 设置页相关
 export const getSettings = () => http.get('/api/system/settings')
 export const saveSettings = (data) => http.post('/api/system/settings', data)
 
