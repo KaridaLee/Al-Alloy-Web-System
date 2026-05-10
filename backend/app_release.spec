@@ -16,11 +16,11 @@ hiddenimports += collect_submodules("openpyxl")
 
 datas = []
 
-# 把前端构建结果收集到发布目录里的 frontend/dist
+# 把前端构建产物打进去，运行时从 _MEIPASS/frontend/dist 读取
 if frontend_dist.exists():
     datas.append((str(frontend_dist), "frontend/dist"))
 
-# 把 data 目录一起打进去
+# data 目录如果存在，也打进去
 if data_dir.exists():
     datas.append((str(data_dir), "data"))
 
@@ -42,21 +42,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='Al_Alloy_Web',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     console=True,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name='Al_Alloy_Web'
 )

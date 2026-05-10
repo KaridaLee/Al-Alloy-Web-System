@@ -12,30 +12,36 @@ from app.api.system import router as system_router
 from app.services.sqlite_service import init_system_tables
 
 
-def get_project_root() -> Path:
+def get_runtime_base_dir() -> Path:
     """
-    源码运行时：
-      backend/app/main.py -> project-root
-    打包运行时：
-      exe 所在目录作为发布根目录
+    运行时资源根目录：
+    1. PyInstaller 打包后优先使用 _MEIPASS（真正的一体化资源目录）
+    2. 否则使用源码项目根目录
     """
     if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
         return Path(sys.executable).resolve().parent
+
+    # 源码模式：backend/app/main.py -> project-root
     return Path(__file__).resolve().parents[3]
 
 
 def get_candidate_frontend_dirs():
-    root = get_project_root()
-    candidates = []
+    base_dir = get_runtime_base_dir()
+    candidates = [
+        base_dir / "frontend" / "dist",
+        base_dir / "dist",
+    ]
 
-    # 1. 最推荐发布结构：exe同级 frontend/dist
-    candidates.append(root / "frontend" / "dist")
-
-    # 2. 某些打包结构下可能直接把 dist 放在根目录
-    candidates.append(root / "dist")
-
-    # 3. PyInstaller onedir 某些情况下资源可能放在 _internal
-    candidates.append(root / "_internal" / "frontend" / "dist")
+    # 如果是打包运行，再附加 exe 同级目录兜底
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([
+            exe_dir / "frontend" / "dist",
+            exe_dir / "dist",
+        ])
 
     # 去重
     result = []
@@ -73,7 +79,8 @@ frontend_dist = find_frontend_dist()
 def debug_frontend_path():
     return {
         "frozen": getattr(sys, "frozen", False),
-        "project_root": str(get_project_root()),
+        "meipass": getattr(sys, "_MEIPASS", None),
+        "runtime_base_dir": str(get_runtime_base_dir()),
         "executable": str(Path(sys.executable).resolve()) if getattr(sys, "frozen", False) else None,
         "current_file": str(Path(__file__).resolve()),
         "frontend_dist": str(frontend_dist) if frontend_dist else None,
