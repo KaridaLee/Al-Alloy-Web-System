@@ -63,7 +63,8 @@ def normalize_detail_item(item: dict):
 def search_records(
     furnace_no: str = Query("", description="炉号"),
     grade_no: str = Query("", description="牌号"),
-    start_time: str = Query("", description="起始时间"),
+    start_time: str = Query("", description="开始时间"),
+    end_time: str = Query("", description="结束时间"),
     sheet: str = Query("", description="工作表"),
     page: int = Query(1),
     page_size: int = Query(20)
@@ -98,8 +99,6 @@ def search_records(
                 where_clauses.append('"牌号" LIKE :grade_no')
                 params["grade_no"] = f"%{grade_no.strip()}%"
 
-            # 时间格式示例：2026-03-11T06:14:36
-            # T只是分隔符，没有特别意义，直接按字符串比较即可
             time_col = None
             if "检测时间时间" in cols:
                 time_col = "检测时间时间"
@@ -110,7 +109,10 @@ def search_records(
                 where_clauses.append(f'"{time_col}" >= :start_time')
                 params["start_time"] = start_time.strip()
 
-            # 如果没输入任何条件，不返回整库全部数据，避免太重
+            if end_time.strip() and time_col:
+                where_clauses.append(f'"{time_col}" <= :end_time')
+                params["end_time"] = end_time.strip()
+
             if not where_clauses:
                 continue
 
@@ -120,7 +122,7 @@ def search_records(
             SELECT "__row_key", "__source_file", "__source_sheet", *
             FROM "{table_name}"
             WHERE {where_sql}
-            ORDER BY "__row_key" DESC
+            ORDER BY "{time_col or '__row_key'}" DESC
             '''
             rows = conn.execute(text(sql), params).mappings().all()
 

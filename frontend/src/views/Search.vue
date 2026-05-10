@@ -22,14 +22,16 @@
           />
         </el-form-item>
 
-        <el-form-item label="时间">
+        <el-form-item label="时间区间">
           <el-date-picker
-            v-model="startTime"
-            type="datetime"
-            placeholder="选择起始时间"
+            v-model="timeRange"
+            type="datetimerange"
+            range-separator="至"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
             format="YYYY-MM-DD HH:mm:ss"
             value-format="YYYY-MM-DDTHH:mm:ss"
-            :style="{ width: isMobile ? '100%' : '240px' }"
+            :style="{ width: isMobile ? '100%' : '360px' }"
           />
         </el-form-item>
 
@@ -96,7 +98,7 @@ import RecordDetailDrawer from '../components/RecordDetailDrawer.vue'
 
 const furnaceNo = ref('')
 const gradeNo = ref('')
-const startTime = ref('')
+const timeRange = ref([])
 
 const page = ref(1)
 const pageSize = ref(20)
@@ -112,7 +114,10 @@ const checkMobile = () => {
 }
 
 const handleSearch = async () => {
-  if (!furnaceNo.value.trim() && !gradeNo.value.trim() && !startTime.value) {
+  const startTime = timeRange.value?.[0] || ''
+  const endTime = timeRange.value?.[1] || ''
+
+  if (!furnaceNo.value.trim() && !gradeNo.value.trim() && !startTime && !endTime) {
     ElMessage.warning('请至少输入一个搜索条件')
     return
   }
@@ -120,7 +125,8 @@ const handleSearch = async () => {
   const { data } = await searchRecords({
     furnace_no: furnaceNo.value,
     grade_no: gradeNo.value,
-    start_time: startTime.value,
+    start_time: startTime,
+    end_time: endTime,
     page: page.value,
     page_size: pageSize.value
   })
@@ -132,7 +138,7 @@ const handleSearch = async () => {
 const handleReset = () => {
   furnaceNo.value = ''
   gradeNo.value = ''
-  startTime.value = ''
+  timeRange.value = []
   page.value = 1
   items.value = []
   total.value = 0
