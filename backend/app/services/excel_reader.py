@@ -1,4 +1,5 @@
 import hashlib
+import re
 from datetime import datetime
 from openpyxl import load_workbook
 
@@ -62,6 +63,41 @@ def is_non_empty(value):
     return normalize_text(value) != ""
 
 
+def normalize_element_header(value: str):
+    """
+    将元素类表头统一规范化：
+    例如：
+    - Cu
+    - Cu(≤0.1)
+    - Cu (≤0.1)
+    - Fe         (≤0.2)
+    - P(0.0035-0.0070)
+    统一映射为：
+    - Cu
+    - Fe
+    - P
+    """
+    text = normalize_text(value)
+    if not text:
+        return ""
+
+    # 去掉所有空白，便于统一识别
+    compact = re.sub(r"\s+", "", text)
+
+    # 先直接检查纯元素
+    if compact in ELEMENTS:
+        return compact
+
+    # 匹配形如 Cu(≤0.1) / Fe(≤0.2) / P(0.0035-0.0070)
+    match = re.match(r"^([A-Z][a-z]?)(\(.*\))?$", compact)
+    if match:
+        elem = match.group(1)
+        if elem in ELEMENTS:
+            return elem
+
+    return ""
+
+
 def detect_header_rows(sheet):
     """
     你的模板基本固定：
@@ -69,18 +105,12 @@ def detect_header_rows(sheet):
     第2-3行表头
     第4行开始数据
     """
-    # 优先使用固定结构
     if sheet.max_row >= 4:
         return 2, 3, 4
-
-    # 兜底
     return 1, 1, 2
 
 
 def detect_effective_max_col(sheet, header_top_row, header_bottom_row, max_scan_cols=120, empty_limit=12):
-    """
-    只看前120列，并且检测原始单元格值，避免被大标题合并污染。
-    """
     max_col = min(sheet.max_column, max_scan_cols)
 
     last_non_empty_col = 0
@@ -130,7 +160,6 @@ def canonical_base_field(top_val, bottom_val):
     if top_val == "针孔度判定" or bottom_val == "针孔度判定":
         return "针孔度判定"
 
-    # 检测时间 + 时间
     if top_val == "检测时间" and bottom_val == "时间":
         return "检测时间时间"
     if combined == "检测时间_时间":
@@ -144,39 +173,25 @@ def canonical_base_field(top_val, bottom_val):
 
 
 def build_headers_fixed(sheet, header_top_row, header_bottom_row, effective_max_col):
-    """
-    终极稳妥策略：
-    1. 先识别前置基础字段
-    2. 第三行中元素列直接按元素符号识别
-    3. 元素区后面的列按固定尾部字段模板映射
-    """
     columns = []
     col_map = []
 
-    element_positions = []
-
-    # 第一步：先识别每一列的基础信息
     raw_info = []
     for c in range(1, effective_max_col + 1):
         top_val = normalize_text(fill_merged_value(sheet, header_top_row, c))
         bottom_val = normalize_text(fill_merged_value(sheet, header_bottom_row, c))
 
-        top_norm = normalize_column_name(top_val)
-        bottom_norm = normalize_column_name(bottom_val)
-
         raw_info.append({
             "col": c,
-            "top": top_norm,
-            "bottom": bottom_norm
+            "top": top_val,
+            "bottom": bottom_val
         })
 
-    # 第二步：先找元素区位置（以第三行为准）
+    # 找元素区
+    element_positions = []
     for info in raw_info:
-        bottom = info["bottom"]
-
-        if bottom in ELEMENTS:
-            element_positions.append(info["col"])
-        elif bottom.startswith("P("):
+        normalized_elem = normalize_element_header(info["bottom"])
+        if normalized_elem:
             element_positions.append(info["col"])
 
     first_element_col = min(element_positions) if element_positions else None
@@ -197,7 +212,7 @@ def build_headers_fixed(sheet, header_top_row, header_bottom_row, effective_max_
         columns.append(final_name)
         col_map.append((col_index, final_name))
 
-    # 第三步：识别基础字段
+    # 前置基础字段
     for info in raw_info:
         c = info["col"]
         if first_element_col and c >= first_element_col:
@@ -207,21 +222,18 @@ def build_headers_fixed(sheet, header_top_row, header_bottom_row, effective_max_
         if field_name:
             add_col(c, field_name)
 
-    # 第四步：识别元素字段
+    # 元素字段
     if first_element_col and last_element_col:
         for info in raw_info:
             c = info["col"]
             if c < first_element_col or c > last_element_col:
                 continue
 
-            bottom = info["bottom"]
+            elem = normalize_element_header(info["bottom"])
+            if elem:
+                add_col(c, elem)
 
-            if bottom in ELEMENTS:
-                add_col(c, bottom)
-            elif bottom.startswith("P("):
-                add_col(c, "P")
-
-    # 第五步：元素区之后按固定尾部字段模板映射
+    # 元素区后的尾部字段
     if last_element_col:
         tail_start = last_element_col + 1
         tail_fields_idx = 0
@@ -230,20 +242,18 @@ def build_headers_fixed(sheet, header_top_row, header_bottom_row, effective_max_
             if tail_fields_idx >= len(TAIL_FIELDS_TEMPLATE):
                 break
 
-            top_val = normalize_column_name(normalize_text(fill_merged_value(sheet, header_top_row, c)))
-            bottom_val = normalize_column_name(normalize_text(fill_merged_value(sheet, header_bottom_row, c)))
+            top_val = normalize_text(fill_merged_value(sheet, header_top_row, c))
+            bottom_val = normalize_text(fill_merged_value(sheet, header_bottom_row, c))
 
-            # 如果这一列头部完全为空，就跳过
-            if not top_val and not bottom_val:
+            if not normalize_column_name(top_val) and not normalize_column_name(bottom_val):
                 continue
 
-            # 优先用模板字段顺序强制对齐
             add_col(c, TAIL_FIELDS_TEMPLATE[tail_fields_idx])
             tail_fields_idx += 1
     else:
-        # 如果没识别到元素区，则退化：把后续非空字段按原底层名加入
+        # 兜底
         for info in raw_info:
-            candidate = info["bottom"] or info["top"]
+            candidate = normalize_column_name(info["bottom"]) or normalize_column_name(info["top"])
             if candidate and "台账" not in candidate and not candidate.startswith("化学成分"):
                 add_col(info["col"], candidate)
 
