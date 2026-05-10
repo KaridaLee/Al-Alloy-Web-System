@@ -42,7 +42,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='铝锭台账系统',
+    name='Al_Alloy_Web',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
