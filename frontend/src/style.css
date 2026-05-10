@@ -1,0 +1,69 @@
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #f1f5f9;
+}
+
+.page-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 16px;
+}
+
+.sub-title {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.gradient-card {
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+  color: white;
+  border: none;
+}
+
+.gradient-card-green {
+  background: linear-gradient(135deg, #059669, #10b981);
+  color: white;
+  border: none;
+}
+
+.gradient-card-purple {
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  color: white;
+  border: none;
+}
+
+.gradient-card-orange {
+  background: linear-gradient(135deg, #ea580c, #f97316);
+  color: white;
+  border: none;
+}
+
+.block-card {
+  border-radius: 16px !important;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06) !important;
+}
+
+.toolbar-card {
+  border-radius: 14px !important;
+}
+
+.value-big {
+  font-size: 30px;
+  font-weight: 700;
+  margin-top: 10px;
+}
+
+.value-small {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
