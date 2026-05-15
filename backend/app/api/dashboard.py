@@ -1,7 +1,8 @@
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sqlalchemy import text
 from app.core.database import engine
+from app.api.search import ELEMENTS_ORDER  # 复用元素列表
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -74,22 +75,68 @@ def overview():
                 for r in rows:
                     brand_stats[r["name"]] = brand_stats.get(r["name"], 0) + r["cnt"]
 
-            if "判定" in safe_cols:
-                rows = conn.execute(text(f'''
-                    SELECT "判定" AS name, COUNT(1) AS cnt
-                    FROM "{table_name}"
-                    WHERE "判定" IS NOT NULL AND TRIM("判定") <> ''
-                    GROUP BY "判定"
-                ''')).mappings().all()
-
-                for r in rows:
-                    judge_stats[r["name"]] = judge_stats.get(r["name"], 0) + r["cnt"]
-
         return {
             "sheetCount": len(sheets),
             "totalRows": total_rows,
             "lastSync": dict(latest_sync) if latest_sync else None,
             "sheetStats": sheet_stats,
-            "brandStats": [{"name": k, "count": v} for k, v in brand_stats.items()],
+            "brandStats": sorted([{"name": k, "count": v} for k, v in brand_stats.items()], key=lambda x: x["count"], reverse=True),
             "judgeStats": judge_stats
         }
+
+@router.get("/brand-trends")
+def get_brand_trends(brand: str = Query(..., description="牌号名称")):
+    """获取指定牌号最近10炉次的元素趋势"""
+    limit = 10
+    all_data = []
+
+    with engine.begin() as conn:
+        metas = conn.execute(text("SELECT table_name, columns_json FROM sys_sheet_meta")).mappings().all()
+        
+        for m in metas:
+            cols = json.loads(m["columns_json"])
+            if "牌号" not in cols or "炉号" not in cols:
+                continue
+            
+            # 找到时间列
+            time_col = "__row_key"
+            if "检测时间时间" in cols: time_col = "检测时间时间"
+            elif "检测时间" in cols: time_col = "检测时间"
+
+            # 选取该牌号在该表中的数据
+            sql = f'''
+                SELECT * FROM "{m["table_name"]}" 
+                WHERE "牌号" = :brand 
+                ORDER BY "{time_col}" DESC LIMIT :limit
+            '''
+            rows = conn.execute(text(sql), {"brand": brand, "limit": limit}).mappings().all()
+            for r in rows:
+                all_data.append(dict(r))
+
+    # 按时间全局排序取最近10条
+    # 假设有检测时间则按时间排，没有则按row_key
+    all_data.sort(key=lambda x: x.get("检测时间时间") or x.get("检测时间") or x.get("__row_key") or "", reverse=True)
+    recent_10 = all_data[:limit]
+    recent_10.reverse() # 转为正序显示
+
+    # 提取炉号
+    furnace_nos = [r.get("炉号") or "-" for r in recent_10]
+    
+    # 提取各元素趋势
+    trends = {}
+    for el in ELEMENTS_ORDER:
+        vals = []
+        for r in recent_10:
+            v = r.get(el)
+            try:
+                vals.append(float(v)) if v else vals.append(0.0)
+            except:
+                vals.append(0.0)
+        trends[el] = vals
+
+    return {
+        "brand": brand,
+        "furnace_nos": furnace_nos,
+        "trends": trends,
+        "elements": [el for el in ELEMENTS_ORDER if any(trends[el])] # 只返回有数据的元素进行轮播
+    }

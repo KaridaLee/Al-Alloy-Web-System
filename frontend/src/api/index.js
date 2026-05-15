@@ -45,6 +45,9 @@ export const searchRecords = (params) => http.get('/api/search', { params })
 export const getRecordDetail = (params) => http.get('/api/search/detail', { params })
 export const getSettings = () => http.get('/api/system/settings')
 export const saveSettings = (data) => http.post('/api/system/settings', data)
-
-// --- 新增的导出接口 ---
 export const exportRecords = (data) => http.post('/api/search/export', data, { responseType: 'blob' })
+
+// --- 新增：获取牌号趋势数据 ---
+export const getBrandTrends = (brand) => http.get('/api/dashboard/brand-trends', { params: { brand } })
+
+export default http
