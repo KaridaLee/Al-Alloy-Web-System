@@ -2,7 +2,7 @@ import json
 from fastapi import APIRouter, Query
 from sqlalchemy import text
 from app.core.database import engine
-from app.api.search import ELEMENTS_ORDER  # 复用元素列表
+from app.api.search import ELEMENTS_ORDER  # 复用搜索模块定义的元素列表
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -32,6 +32,7 @@ def overview():
             cols = json.loads(s["columns_json"])
             safe_cols = [c.strip() for c in cols]
 
+            # 统计炉数
             if "炉号" in safe_cols:
                 row_count = conn.execute(text(f'''
                     SELECT COUNT(DISTINCT "炉号") AS cnt
@@ -52,6 +53,7 @@ def overview():
                 "lastSyncTime": s["last_sync_time"]
             })
 
+            # 统计牌号分布
             if "牌号" in safe_cols and "炉号" in safe_cols:
                 rows = conn.execute(text(f'''
                     SELECT "牌号" AS name, COUNT(DISTINCT "炉号") AS cnt
@@ -84,9 +86,13 @@ def overview():
             "judgeStats": judge_stats
         }
 
+
 @router.get("/brand-trends")
 def get_brand_trends(brand: str = Query(..., description="牌号名称")):
-    """获取指定牌号最近10炉次的元素趋势"""
+    """
+    获取指定牌号最近10炉次的元素趋势数据。
+    要求：批次号必须带有 'DZ' 关键字。
+    """
     limit = 10
     all_data = []
 
@@ -95,48 +101,75 @@ def get_brand_trends(brand: str = Query(..., description="牌号名称")):
         
         for m in metas:
             cols = json.loads(m["columns_json"])
-            if "牌号" not in cols or "炉号" not in cols:
+            # 只有当表包含 牌号、炉号、批次号 时才参与计算
+            if "牌号" not in cols or "炉号" not in cols or "批次号" not in cols:
                 continue
             
-            # 找到时间列
+            # 动态确定时间排序列
             time_col = "__row_key"
-            if "检测时间时间" in cols: time_col = "检测时间时间"
-            elif "检测时间" in cols: time_col = "检测时间"
+            if "检测时间时间" in cols: 
+                time_col = "检测时间时间"
+            elif "检测时间" in cols: 
+                time_col = "检测时间"
 
-            # 选取该牌号在该表中的数据
+            # 选取该牌号且批次号包含 'DZ' 的数据
             sql = f'''
                 SELECT * FROM "{m["table_name"]}" 
                 WHERE "牌号" = :brand 
+                  AND "批次号" LIKE :batch_filter
                 ORDER BY "{time_col}" DESC LIMIT :limit
             '''
-            rows = conn.execute(text(sql), {"brand": brand, "limit": limit}).mappings().all()
+            rows = conn.execute(text(sql), {
+                "brand": brand, 
+                "batch_filter": "%DZ%", 
+                "limit": limit
+            }).mappings().all()
+            
             for r in rows:
                 all_data.append(dict(r))
 
-    # 按时间全局排序取最近10条
-    # 假设有检测时间则按时间排，没有则按row_key
-    all_data.sort(key=lambda x: x.get("检测时间时间") or x.get("检测时间") or x.get("__row_key") or "", reverse=True)
+    # 1. 对来自不同表的所有符合条件的数据进行全局排序（按检测时间/主键）
+    all_data.sort(
+        key=lambda x: x.get("检测时间时间") or x.get("检测时间") or x.get("__row_key") or "", 
+        reverse=True
+    )
+    
+    # 2. 取全局最近的10条
     recent_10 = all_data[:limit]
-    recent_10.reverse() # 转为正序显示
+    # 3. 折线图从左往右展示，因此需要反转为正序（旧 -> 新）
+    recent_10.reverse()
 
-    # 提取炉号
+    # 提取炉号作为 X 轴标签
     furnace_nos = [r.get("炉号") or "-" for r in recent_10]
     
-    # 提取各元素趋势
+    # 提取各元素趋势数据
     trends = {}
+    valid_elements = []
+    
     for el in ELEMENTS_ORDER:
         vals = []
+        has_value = False
         for r in recent_10:
             v = r.get(el)
-            try:
-                vals.append(float(v)) if v else vals.append(0.0)
-            except:
+            # 尝试转换为浮点数，转换失败或为空则补 0
+            if v is not None and v != "":
+                try:
+                    num_val = float(v)
+                    vals.append(num_val)
+                    if num_val > 0: has_value = True
+                except:
+                    vals.append(0.0)
+            else:
                 vals.append(0.0)
+        
         trends[el] = vals
+        # 只有在最近10条中有实际数据的元素才加入轮播列表，避免轮播全零的空表
+        if has_value:
+            valid_elements.append(el)
 
     return {
         "brand": brand,
         "furnace_nos": furnace_nos,
         "trends": trends,
-        "elements": [el for el in ELEMENTS_ORDER if any(trends[el])] # 只返回有数据的元素进行轮播
+        "elements": valid_elements if valid_elements else ["Al"] # 兜底至少显示 Al
     }
