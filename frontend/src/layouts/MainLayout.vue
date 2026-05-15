@@ -82,9 +82,6 @@
 
           <div>
             <div style="font-size:18px;font-weight:700;color:#0f172a;">本地服务控制台</div>
-            <div class="sub-title" style="max-width:220px;word-break:break-all;">
-              监听地址：{{ hostText }}
-            </div>
           </div>
         </div>
 
@@ -105,9 +102,7 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { getSystemStatus } from '../api'
 
-const hostText = ref('加载中...')
 const isMobile = ref(false)
 const mobileMenuVisible = ref(false)
 
@@ -115,12 +110,9 @@ const checkMobile = () => {
   isMobile.value = window.innerWidth <= 768
 }
 
-onMounted(async () => {
+onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
-
-  const { data } = await getSystemStatus()
-  hostText.value = `${data.host}:${data.port}`
 })
 
 onBeforeUnmount(() => {

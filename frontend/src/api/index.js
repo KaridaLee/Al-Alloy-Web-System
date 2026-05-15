@@ -46,4 +46,5 @@ export const getRecordDetail = (params) => http.get('/api/search/detail', { para
 export const getSettings = () => http.get('/api/system/settings')
 export const saveSettings = (data) => http.post('/api/system/settings', data)
 
-export default http
+// --- 新增的导出接口 ---
+export const exportRecords = (data) => http.post('/api/search/export', data, { responseType: 'blob' })

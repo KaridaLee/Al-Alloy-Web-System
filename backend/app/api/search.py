@@ -1,6 +1,11 @@
 from fastapi import APIRouter, Query
 from sqlalchemy import text
 from app.core.database import engine
+from io import BytesIO
+from typing import List
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import openpyxl
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -10,6 +15,14 @@ ELEMENTS_ORDER = [
     "Ga", "Hg", "Li", "Mo", "Na", "P", "V"
 ]
 ELEMENTS_SET = set(ELEMENTS_ORDER)
+
+# --- 导出接口的请求体模型 ---
+class ExportItem(BaseModel):
+    row_key: str
+    sheet_name: str
+
+class ExportRequest(BaseModel):
+    items: List[ExportItem]
 
 
 def normalize_detail_item(item: dict):
@@ -162,3 +175,57 @@ def record_detail(sheet: str, row_key: str):
             "success": True,
             "item": normalized
         }
+
+
+@router.post("/export")
+def export_excel(req: ExportRequest):
+    wb = openpyxl.Workbook()
+    # 使用 worksheets[0] 代替 active，从而消除静态检查中的 None 警告
+    ws = wb.worksheets[0]
+    ws.title = "Sheet1"
+
+    # 写入表头，只包含元素
+    ws.append(ELEMENTS_ORDER)
+
+    with engine.begin() as conn:
+        for item in req.items:
+            # 查找表名
+            meta = conn.execute(
+                text("SELECT table_name FROM sys_sheet_meta WHERE sheet_name=:sheet"),
+                {"sheet": item.sheet_name}
+            ).mappings().first()
+
+            if not meta:
+                continue
+
+            table_name = meta["table_name"]
+            # 提取该行数据
+            row_data = conn.execute(
+                text(f'SELECT * FROM "{table_name}" WHERE "__row_key"=:rk'),
+                {"rk": item.row_key}
+            ).mappings().first()
+
+            if row_data:
+                row_list = []
+                for el in ELEMENTS_ORDER:
+                    val = row_data.get(el)
+                    # 如果该条目没有这个元素，或者值为空，则按示例文件格式填入 0
+                    if val is None or val == "":
+                        row_list.append(0)
+                    else:
+                        try:
+                            # 尝试转换为数字，以保证 Excel 中是数值格式而非文本
+                            row_list.append(float(val))
+                        except (ValueError, TypeError):
+                            row_list.append(val)
+                ws.append(row_list)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=elements_export.xlsx"}
+    )

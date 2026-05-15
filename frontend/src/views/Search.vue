@@ -38,6 +38,14 @@
         <el-form-item>
           <el-button type="primary" @click="handleSearch">搜索</el-button>
           <el-button @click="handleReset">重置</el-button>
+          <el-button 
+            type="success" 
+            :disabled="selectedRows.length === 0" 
+            @click="handleExport"
+            :loading="exporting"
+          >
+            导出选中元素 ({{ selectedRows.length }})
+          </el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -52,7 +60,9 @@
         </div>
       </template>
 
-      <el-table :data="items" border stripe style="width:100%;">
+      <el-table :data="items" border stripe style="width:100%;" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="55" align="center" />
+        
         <el-table-column prop="_sheet_name" label="工作表" width="120" />
         <el-table-column prop="炉号" label="炉号" width="120" />
         <el-table-column prop="牌号" label="牌号" width="180" />
@@ -93,7 +103,8 @@
 <script setup>
 import { onMounted, ref, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { searchRecords, getRecordDetail } from '../api'
+// 引入新的 exportRecords API
+import { searchRecords, getRecordDetail, exportRecords } from '../api'
 import RecordDetailDrawer from '../components/RecordDetailDrawer.vue'
 
 const furnaceNo = ref('')
@@ -108,6 +119,10 @@ const items = ref([])
 const drawerVisible = ref(false)
 const currentRecord = ref(null)
 const isMobile = ref(false)
+
+// 新增多选与导出相关的响应式变量
+const selectedRows = ref([])
+const exporting = ref(false)
 
 const checkMobile = () => {
   isMobile.value = window.innerWidth <= 768
@@ -151,6 +166,50 @@ const showDetail = async (row) => {
   })
   currentRecord.value = data.item
   drawerVisible.value = true
+}
+
+// 新增：处理表格多选变化
+const handleSelectionChange = (val) => {
+  selectedRows.value = val
+}
+
+// 新增：处理导出请求
+const handleExport = async () => {
+  if (selectedRows.value.length === 0) return
+  
+  exporting.value = true
+  try {
+    const payload = {
+      items: selectedRows.value.map(row => ({
+        row_key: row.__row_key,
+        sheet_name: row._sheet_name || row.__source_sheet
+      }))
+    }
+
+    const response = await exportRecords(payload)
+    
+    // 生成文件下载
+    const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    
+    // 文件名附加当前时间
+    const timeStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    link.download = `元素数据导出_${timeStr}.xlsx`
+    
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    
+    ElMessage.success('导出成功')
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('导出失败，请检查网络或控制台日志')
+  } finally {
+    exporting.value = false
+  }
 }
 
 onMounted(() => {
