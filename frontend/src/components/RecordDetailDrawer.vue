@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visibleInner" title="记录详情" size="35%">
+  <el-drawer v-model="visibleInner" title="记录详情" size="25%">
     <div v-if="record">
       <el-card class="block-card" style="margin-bottom:16px;">
         <template #header>

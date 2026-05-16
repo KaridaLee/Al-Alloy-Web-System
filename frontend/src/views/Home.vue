@@ -21,7 +21,7 @@
       <el-col :span="12">
         <el-card class="block-card">
           <template #header>
-            <div style="font-weight:700;">各工作表数据量 (5秒轮播)</div>
+            <div style="font-weight:700;">牌号数据量</div>
           </template>
           <div ref="sheetChartRef" style="height:300px;"></div>
         </el-card>
@@ -139,8 +139,12 @@ const renderSheetChartPage = () => {
     yAxis: { type: 'value' },
     series: [{ 
       type: 'bar', 
+      barMaxWidth: 24, // 限制柱子的最大宽度，使其变细
       data: pageData.map(i => i.rowCount), 
-      itemStyle: { color: '#3b82f6' } 
+      itemStyle: { 
+        color: '#3b82f6',
+        borderRadius: [4, 4, 0, 0] // 顶部增加一点圆角让界面更美观
+      } 
     }]
   }, true)
 }
@@ -222,7 +226,19 @@ const renderTrendChart = (index) => {
     yAxis: { 
       type: 'value', 
       scale: true,
-      splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } }
+      splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } },
+      // 动态调整 Y 轴上下限，避免折线图波动过大
+      min: (value) => {
+        const range = value.max - value.min
+        if (range === 0) return value.min === 0 ? 0 : Number((value.min * 0.7).toFixed(4))
+        const minVal = value.min - range * 0.3
+        return minVal < 0 ? 0 : Number(minVal.toFixed(4)) // 化学元素含量通常不为负数
+      },
+      max: (value) => {
+        const range = value.max - value.min
+        if (range === 0) return value.max === 0 ? 0.1 : Number((value.max * 1.3).toFixed(4))
+        return Number((value.max + range * 0.3).toFixed(4))
+      }
     },
     series: [{
       name: element,
