@@ -245,7 +245,7 @@ def export_excel(req: ExportRequest):
 
 
 # ==========================================
-# 新增：企业标准管理模块专属接口（采用后端 JPEG 算法压缩分发）
+# 企业标准管理模块专属接口（算法优化清晰度版）
 # ==========================================
 
 @router.get("/standards")
@@ -291,7 +291,7 @@ def get_standard_detail(brand_name: str = Query(...)):
             res["ctrl_req"] = json.loads(res["ctrl_req_json"]) if res.get("ctrl_req_json") else {}
             res["mech_props"] = json.loads(res["mech_props_json"]) if res.get("mech_props_json") else {}
             res["samples"] = json.loads(res["samples_json"]) if res.get("samples_json") else {}
-        except Exception as e:
+        except Exception:
             pass
 
         return {"success": True, "standard": res}
@@ -299,7 +299,6 @@ def get_standard_detail(brand_name: str = Query(...)):
 
 @router.get("/standards/file/{brand_name}/info")
 def get_standard_pdf_info(brand_name: str):
-    """获取 PDF 的总页数，供前端生成图像占位符"""
     from app.core.config import BASE_DIR
     pdf_dir = BASE_DIR / "data" / "standards"
     if not pdf_dir.exists():
@@ -320,9 +319,7 @@ def get_standard_pdf_info(brand_name: str):
 @router.get("/standards/file/{brand_name}/page/{page_index}")
 def get_standard_pdf_page(brand_name: str, page_index: int):
     """
-    【核心图像压缩算法】
-    提取 PDF 指定页，栅格化为位图，转换为 RGB 格式，并利用 JPEG 有损压缩算法优化，
-    大幅降低原件在前端查看时的内存和带宽占用。
+    【算法调优版】提取 PDF 指定页并转换为清晰无失真的压缩图像流
     """
     from app.core.config import BASE_DIR
     pdf_dir = BASE_DIR / "data" / "standards"
@@ -334,11 +331,11 @@ def get_standard_pdf_page(brand_name: str, page_index: int):
                 with pdfplumber.open(p) as pdf:
                     if 0 <= page_index < len(pdf.pages):
                         page = pdf.pages[page_index]
-                        # 1. 将矢量 PDF 栅格化 (resolution=100 提供平衡的清晰度)
-                        img = page.to_image(resolution=100).original
+                        # 核心修改点：解析度由 100 提升至 150 DPI，确保小字、表格线依然清晰锐利
+                        img = page.to_image(resolution=150).original
                         buf = BytesIO()
-                        # 2. 转换为 RGB，并使用 JPEG 算法压缩 (quality=75 且开启优化)
-                        img.convert("RGB").save(buf, format="JPEG", quality=75, optimize=True)
+                        # 核心修改点：压缩质量由 75% 提升至 90%，开启高级有损优化，解决图像发虚、失真问题
+                        img.convert("RGB").save(buf, format="JPEG", quality=90, optimize=True)
                         buf.seek(0)
                         return StreamingResponse(buf, media_type="image/jpeg")
             except Exception as e:

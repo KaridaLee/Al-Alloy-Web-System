@@ -33,7 +33,7 @@
               指标详情
             </el-button>
             <el-button type="success" link @click="openPdfViewer(row.brand_name)">
-              查看原件 (压缩图流)
+              查看原件
             </el-button>
           </template>
         </el-table-column>
@@ -91,7 +91,7 @@
 
     <el-dialog
       v-model="pdfDialogVisible"
-      :title="'企标物理原件（压缩算法处理）：' + activePdfBrand"
+      :title="'企标物理原件：' + activePdfBrand"
       width="60%"
       top="4vh"
       destroy-on-close
@@ -162,7 +162,6 @@ const openPdfViewer = async (brandName) => {
   }
 }
 
-// 动态拼接每页压缩图像的请求 URL
 const getPageUrl = (pageIndex) => {
   return `/api/search/standards/file/${encodeURIComponent(activePdfBrand.value)}/page/${pageIndex}`
 }
