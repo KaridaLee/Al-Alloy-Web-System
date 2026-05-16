@@ -56,29 +56,47 @@ def save_settings(payload: SettingsPayload):
 
 
 @router.post("/upload")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...)):
     """
-    处理台账 Excel 文件直传
-    自动识别当前系统配置的源文件目录，并将文件落盘保存到该目录下
+    处理文件直传：自动判断文件类型
+    .xlsx -> 存入台账目录
+    .pdf  -> 存入企业标准目录，并触发 PDF 解析存入独立 DB
     """
-    if not file.filename or not file.filename.endswith('.xlsx'):
-        return {"success": False, "message": "仅支持上传后缀为 .xlsx 格式的 Excel 账表文件"}
-    
-    settings = load_settings()
-    source_dir_str = settings.get("sourceDir", "data/source")
-    source_path = Path(source_dir_str)
-    
-    # 兼容处理相对路径和绝对路径
-    if not source_path.is_absolute():
-        dest_dir = BASE_DIR / source_path
-    else:
-        dest_dir = source_path
+    # 提取文件名并处理 None 的情况，消除类型检查警告
+    filename = file.filename
+    if not filename:
+        return {"success": False, "message": "无法获取文件名，上传失败"}
+
+    if filename.endswith('.xlsx'):
+        settings = load_settings()
+        source_dir_str = settings.get("sourceDir", "data/source")
+        source_path = Path(source_dir_str)
+        dest_dir = BASE_DIR / source_path if not source_path.is_absolute() else source_path
+        msg_suffix = "已存入台账待同步目录"
         
+    elif filename.lower().endswith('.pdf'):
+        dest_dir = BASE_DIR / "data" / "standards"
+        msg_suffix = "已存入企业标准库并开始解析"
+        
+    else:
+        return {"success": False, "message": "仅支持上传 .xlsx 或 .pdf 格式的文件"}
+    
     dest_dir.mkdir(parents=True, exist_ok=True)
-    file_path = dest_dir / file.filename
+    
+    # 此时 filename 已经被保证是 str 类型，拼接不会再报错
+    file_path = dest_dir / filename
     
     # 写入文件到本地
     with file_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
-    return {"success": True, "message": f"文件 {file.filename} 上传成功，已存入待同步目录"}
+    # 如果是 PDF，触发企业标准解析引擎
+    if filename.lower().endswith('.pdf'):
+        try:
+            from app.core.standard_engine import sync_pdf_standard
+            sync_pdf_standard(str(file_path))
+            return {"success": True, "message": f"标准文件 {filename} 上传并解析入库成功！"}
+        except Exception as e:
+            return {"success": False, "message": f"PDF 上传成功，但提取标准数据失败: {str(e)}"}
+        
+    return {"success": True, "message": f"文件 {filename} 上传成功，{msg_suffix}"}

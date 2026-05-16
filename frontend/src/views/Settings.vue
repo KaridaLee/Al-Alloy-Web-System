@@ -32,7 +32,7 @@
 
     <el-card class="block-card">
       <template #header>
-        <div style="font-weight:700;">Excel 台账原始文件直传</div>
+        <div style="font-weight:700;">台账数据 / 企业标准 直传</div>
       </template>
       
       <div style="max-width: 600px; margin: 10px 0;">
@@ -40,17 +40,19 @@
           drag
           action=""
           :http-request="handleCustomUpload"
-          accept=".xlsx"
+          accept=".xlsx,.pdf"
           :show-file-list="true"
           multiple
         >
           <el-icon class="el-icon--upload"><upload-filled /></el-icon>
           <div class="el-upload__text">
-            将需要转换的台账 .xlsx 文件拖到此处，或 <em>点击上传</em>
+            将 <em>.xlsx (数据台账)</em> 或 <em>.pdf (企业标准)</em> 文件拖到此处，或 <em>点击上传</em>
           </div>
           <template #tip>
             <div class="el-upload__tip" style="color: #94a3b8; margin-top: 8px;">
-              提示：上传后文件将直接保存在系统的同步源目录中（当前配置为: {{ settings.sourceDir }}）。上传完成后，可点击上方的“立即同步目录全部Excel”进行本地指纹库增量解析。
+              提示：系统会自动识别文件。<br/>
+              - <strong>.xlsx 文件</strong> 将保存在同步源目录，等待增量同步。<br/>
+              - <strong>.pdf 文件</strong> 将存入 data/standards 目录，并自动解析核心指标存入独立的企业标准数据库 (standards.db)。
             </div>
           </template>
         </el-upload>
@@ -62,7 +64,7 @@
       title="说明"
       type="info"
       :closable="false"
-      description="当前同步模式支持手动同步和Cron定时同步。目录同步与上传功能会自动对应设置目录。通过指纹识别引擎，系统将仅对有改动或新增的数据进行数据库操作。"
+      description="当前同步模式支持手动同步和Cron定时同步。目录同步会扫描设置目录下所有 xlsx 文件并导入同一个数据库。"
     />
   </div>
 </template>
@@ -105,7 +107,7 @@ const handleSave = async () => {
   } catch (e) {
     console.error(e)
     ElMessage.error('保存设置失败')
-  } fill: {
+  } finally {
     saving.value = false
   }
 }
@@ -127,7 +129,6 @@ const handleSyncAll = async () => {
   }
 }
 
-// 处理自定义文件上传逻辑
 const handleCustomUpload = async (options) => {
   const formData = new FormData()
   formData.append('file', options.file)
