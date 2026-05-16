@@ -16,10 +16,11 @@ ELEMENTS_ORDER = [
 ]
 ELEMENTS_SET = set(ELEMENTS_ORDER)
 
-# --- 导出接口的请求体模型 ---
+
 class ExportItem(BaseModel):
     row_key: str
     sheet_name: str
+
 
 class ExportRequest(BaseModel):
     items: List[ExportItem]
@@ -180,16 +181,15 @@ def record_detail(sheet: str, row_key: str):
 @router.post("/export")
 def export_excel(req: ExportRequest):
     wb = openpyxl.Workbook()
-    # 使用 worksheets[0] 代替 active，从而消除静态检查中的 None 警告
     ws = wb.worksheets[0]
     ws.title = "Sheet1"
 
-    # 写入表头，只包含元素
-    ws.append(ELEMENTS_ORDER)
+    # 严格按照样板配置完整表头字段：基础信息 + 元素列表 + SF
+    headers = ["炉号", "牌号", "批次号", "检测时间时间"] + ELEMENTS_ORDER + ["SF"]
+    ws.append(headers)
 
     with engine.begin() as conn:
         for item in req.items:
-            # 查找表名
             meta = conn.execute(
                 text("SELECT table_name FROM sys_sheet_meta WHERE sheet_name=:sheet"),
                 {"sheet": item.sheet_name}
@@ -199,7 +199,6 @@ def export_excel(req: ExportRequest):
                 continue
 
             table_name = meta["table_name"]
-            # 提取该行数据
             row_data = conn.execute(
                 text(f'SELECT * FROM "{table_name}" WHERE "__row_key"=:rk'),
                 {"rk": item.row_key}
@@ -207,17 +206,34 @@ def export_excel(req: ExportRequest):
 
             if row_data:
                 row_list = []
+                
+                # 1. 填充样板基础数据
+                row_list.append(row_data.get("炉号") or "")
+                row_list.append(row_data.get("牌号") or "")
+                row_list.append(row_data.get("批次号") or "")
+                row_list.append(row_data.get("检测时间时间") or row_data.get("检测时间") or "")
+                
+                # 2. 遍历填充化学元素成分数值
                 for el in ELEMENTS_ORDER:
                     val = row_data.get(el)
-                    # 如果该条目没有这个元素，或者值为空，则按示例文件格式填入 0
                     if val is None or val == "":
-                        row_list.append(0)
+                        row_list.append(0.0)
                     else:
                         try:
-                            # 尝试转换为数字，以保证 Excel 中是数值格式而非文本
                             row_list.append(float(val))
                         except (ValueError, TypeError):
                             row_list.append(val)
+                            
+                # 3. 填充末尾的 SF 数据
+                sf_val = row_data.get("SF")
+                if sf_val is None or sf_val == "":
+                    row_list.append(0.0)
+                else:
+                    try:
+                        row_list.append(float(sf_val))
+                    except (ValueError, TypeError):
+                        row_list.append(sf_val)
+                        
                 ws.append(row_list)
 
     output = BytesIO()

@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="visibleInner" title="记录详情" size="70%">
+  <el-drawer v-model="visibleInner" title="记录详情" size="35%">
     <div v-if="record">
       <el-card class="block-card" style="margin-bottom:16px;">
         <template #header>
@@ -7,7 +7,7 @@
         </template>
 
         <el-table :data="baseInfoRows" border stripe style="width:100%;">
-          <el-table-column prop="field" label="字段" width="220" />
+          <el-table-column prop="field" label="字段" width="120" />
           <el-table-column prop="value" label="值" />
         </el-table>
       </el-card>
@@ -18,7 +18,7 @@
         </template>
 
         <el-table :data="chemistryRows" border stripe style="width:100%;">
-          <el-table-column prop="field" label="元素" width="160" />
+          <el-table-column prop="field" label="元素" width="100" />
           <el-table-column prop="value" label="含量" />
         </el-table>
       </el-card>
@@ -29,7 +29,7 @@
         </template>
 
         <el-table :data="otherRows" border stripe style="width:100%;">
-          <el-table-column prop="field" label="字段" width="220" />
+          <el-table-column prop="field" label="字段" width="120" />
           <el-table-column prop="value" label="值" />
         </el-table>
       </el-card>
@@ -44,7 +44,7 @@ const props = defineProps({
   modelValue: Boolean,
   record: {
     type: Object,
-    default: () => ({})
+    default: () => null
   }
 })
 
@@ -59,39 +59,44 @@ const labelMap = {
   '__source_file': '来源文件',
   '__source_sheet': '来源工作表',
   '班组_班长': '班组/班长',
-  '检测时间时间': '检测时间'
+  '检测时间时间': '检测时间',
+  '检测时间': '检测时间'
 }
 
 const formatLabel = (key) => labelMap[key] || key
 
 const formatValue = (val) => {
   if (val === '' || val === null || val === undefined) return '-'
-
-  const str = String(val).trim()
-
-  // 仅处理科学计数法/数值字符串
-  if (/^-?\d+(\.\d+)?e[-+]?\d+$/i.test(str) || /^-?\d+(\.\d+)?$/.test(str)) {
-    const num = Number(str)
-    if (!Number.isNaN(num)) {
-      // 保留较高精度，再去掉末尾多余0
-      let fixed = num.toFixed(10)
-      fixed = fixed.replace(/\.?0+$/, '')
-      return fixed
-    }
-  }
-
-  return str
+  return String(val).trim()
 }
 
-const toRows = (obj) => {
-  if (!obj || typeof obj !== 'object') return []
-  return Object.keys(obj).map((key) => ({
+const baseInfoRows = computed(() => {
+  if (!props.record || !props.record.baseInfo) return []
+  return Object.entries(props.record.baseInfo).map(([key, value]) => ({
     field: formatLabel(key),
-    value: formatValue(obj[key])
+    value: formatValue(value)
   }))
-}
+})
 
-const baseInfoRows = computed(() => toRows(props.record?.baseInfo))
-const chemistryRows = computed(() => toRows(props.record?.chemistry))
-const otherRows = computed(() => toRows(props.record?.others))
+const chemistryRows = computed(() => {
+  if (!props.record || !props.record.chemistry) return []
+  return Object.entries(props.record.chemistry).map(([key, value]) => ({
+    field: key,
+    value: formatValue(value)
+  }))
+})
+
+const otherRows = computed(() => {
+  if (!props.record || !props.record.others) return []
+  return Object.entries(props.record.others).map(([key, value]) => ({
+    field: formatLabel(key),
+    value: formatValue(value)
+  }))
+})
 </script>
+
+<style scoped>
+.block-card {
+  border-radius: 8px;
+}
+</style>
