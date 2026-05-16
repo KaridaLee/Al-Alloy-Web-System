@@ -1,6 +1,5 @@
 <template>
   <el-container style="height: 100vh;">
-    <!-- 桌面端侧边栏 -->
     <el-aside
       v-if="!isMobile"
       width="240px"
@@ -24,25 +23,26 @@
         <el-menu-item index="/search">
           <span>数据搜索</span>
         </el-menu-item>
+        <el-menu-item index="/standards">
+          <span>企业标准</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <span>系统设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
 
-    <!-- 手机端抽屉菜单 -->
     <el-drawer
       v-model="mobileMenuVisible"
+      title="菜单导航"
       direction="ltr"
-      size="220px"
+      size="260px"
       :with-header="false"
-      v-if="isMobile"
+      class="mobile-menu-drawer"
     >
-      <div style="padding:22px 20px;border-bottom:1px solid #e2e8f0;">
-        <div style="font-size:20px;font-weight:800;color:#0f172a;">铝锭成分台账系统</div>
-        <div style="font-size:12px;color:#64748b;margin-top:6px;">本地一体化查询面板</div>
+      <div style="padding:20px;background:#0f172a;color:#fff;font-weight:700;">
+        铝锭成分台账系统
       </div>
-
       <el-menu
         router
         :default-active="$route.path"
@@ -53,6 +53,9 @@
         </el-menu-item>
         <el-menu-item index="/search">
           <span>数据搜索</span>
+        </el-menu-item>
+        <el-menu-item index="/standards">
+          <span>企业标准</span>
         </el-menu-item>
         <el-menu-item index="/settings">
           <span>系统设置</span>
@@ -101,21 +104,30 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 const isMobile = ref(false)
 const mobileMenuVisible = ref(false)
 
-const checkMobile = () => {
+const handleResize = () => {
   isMobile.value = window.innerWidth <= 768
 }
 
 onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
+  handleResize()
+  window.addEventListener('resize', handleResize)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', checkMobile)
+  window.removeEventListener('resize', handleResize)
 })
 </script>
+
+<style>
+.mobile-menu-drawer .el-drawer__body {
+  padding: 0 !important;
+}
+.el-menu {
+  border-right: none !important;
+}
+</style>

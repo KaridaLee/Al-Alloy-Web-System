@@ -3,9 +3,11 @@ from sqlalchemy import text
 from app.core.database import engine
 from io import BytesIO
 from typing import List
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import openpyxl
+import sqlite3
+import json
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -184,7 +186,6 @@ def export_excel(req: ExportRequest):
     ws = wb.worksheets[0]
     ws.title = "Sheet1"
 
-    # 严格按照样板配置完整表头字段：基础信息 + 元素列表 + SF
     headers = ["炉号", "牌号", "批次号", "检测时间时间"] + ELEMENTS_ORDER + ["SF"]
     ws.append(headers)
 
@@ -206,14 +207,11 @@ def export_excel(req: ExportRequest):
 
             if row_data:
                 row_list = []
-                
-                # 1. 填充样板基础数据
                 row_list.append(row_data.get("炉号") or "")
                 row_list.append(row_data.get("牌号") or "")
                 row_list.append(row_data.get("批次号") or "")
                 row_list.append(row_data.get("检测时间时间") or row_data.get("检测时间") or "")
-                
-                # 2. 遍历填充化学元素成分数值
+
                 for el in ELEMENTS_ORDER:
                     val = row_data.get(el)
                     if val is None or val == "":
@@ -223,8 +221,7 @@ def export_excel(req: ExportRequest):
                             row_list.append(float(val))
                         except (ValueError, TypeError):
                             row_list.append(val)
-                            
-                # 3. 填充末尾的 SF 数据
+
                 sf_val = row_data.get("SF")
                 if sf_val is None or sf_val == "":
                     row_list.append(0.0)
@@ -233,7 +230,7 @@ def export_excel(req: ExportRequest):
                         row_list.append(float(sf_val))
                     except (ValueError, TypeError):
                         row_list.append(sf_val)
-                        
+
                 ws.append(row_list)
 
     output = BytesIO()
@@ -245,3 +242,106 @@ def export_excel(req: ExportRequest):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=elements_export.xlsx"}
     )
+
+
+# ==========================================
+# 新增：企业标准管理模块专属接口（采用后端 JPEG 算法压缩分发）
+# ==========================================
+
+@router.get("/standards")
+def search_standards(brand_name: str = Query("")):
+    from app.core.config import DATA_DIR
+    db_path = DATA_DIR / "sqlite" / "standards.db"
+    if not db_path.exists():
+        return {"items": []}
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        if brand_name.strip():
+            cursor = conn.execute(
+                'SELECT brand_name, updated_at FROM enterprise_standard WHERE brand_name LIKE ? ORDER BY brand_name ASC',
+                (f"%{brand_name.strip()}%",)
+            )
+        else:
+            cursor = conn.execute('SELECT brand_name, updated_at FROM enterprise_standard ORDER BY brand_name ASC')
+        rows = cursor.fetchall()
+        return {"items": [dict(r) for r in rows]}
+
+
+@router.get("/standards/detail")
+def get_standard_detail(brand_name: str = Query(...)):
+    from app.core.config import DATA_DIR
+    db_path = DATA_DIR / "sqlite" / "standards.db"
+    if not db_path.exists():
+        return {"success": False, "message": "标准数据库未初始化"}
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            'SELECT * FROM enterprise_standard WHERE brand_name = ?',
+            (brand_name,)
+        ).fetchone()
+
+        if not row:
+            return {"success": False, "message": "未找到该牌号的企业标准数据"}
+
+        res = dict(row)
+        try:
+            res["tech_req"] = json.loads(res["tech_req_json"]) if res.get("tech_req_json") else {}
+            res["ctrl_req"] = json.loads(res["ctrl_req_json"]) if res.get("ctrl_req_json") else {}
+            res["mech_props"] = json.loads(res["mech_props_json"]) if res.get("mech_props_json") else {}
+            res["samples"] = json.loads(res["samples_json"]) if res.get("samples_json") else {}
+        except Exception as e:
+            pass
+
+        return {"success": True, "standard": res}
+
+
+@router.get("/standards/file/{brand_name}/info")
+def get_standard_pdf_info(brand_name: str):
+    """获取 PDF 的总页数，供前端生成图像占位符"""
+    from app.core.config import BASE_DIR
+    pdf_dir = BASE_DIR / "data" / "standards"
+    if not pdf_dir.exists():
+        return {"success": False, "message": "标准物理目录未建立"}
+
+    for p in pdf_dir.glob("*.pdf"):
+        if brand_name.lower() in p.name.lower():
+            import pdfplumber
+            try:
+                with pdfplumber.open(p) as pdf:
+                    return {"success": True, "totalPages": len(pdf.pages)}
+            except Exception as e:
+                return {"success": False, "message": f"解析原件失败: {str(e)}"}
+
+    return {"success": False, "message": f"未找到 {brand_name} 的 PDF"}
+
+
+@router.get("/standards/file/{brand_name}/page/{page_index}")
+def get_standard_pdf_page(brand_name: str, page_index: int):
+    """
+    【核心图像压缩算法】
+    提取 PDF 指定页，栅格化为位图，转换为 RGB 格式，并利用 JPEG 有损压缩算法优化，
+    大幅降低原件在前端查看时的内存和带宽占用。
+    """
+    from app.core.config import BASE_DIR
+    pdf_dir = BASE_DIR / "data" / "standards"
+    for p in pdf_dir.glob("*.pdf"):
+        if brand_name.lower() in p.name.lower():
+            import pdfplumber
+            from io import BytesIO
+            try:
+                with pdfplumber.open(p) as pdf:
+                    if 0 <= page_index < len(pdf.pages):
+                        page = pdf.pages[page_index]
+                        # 1. 将矢量 PDF 栅格化 (resolution=100 提供平衡的清晰度)
+                        img = page.to_image(resolution=100).original
+                        buf = BytesIO()
+                        # 2. 转换为 RGB，并使用 JPEG 算法压缩 (quality=75 且开启优化)
+                        img.convert("RGB").save(buf, format="JPEG", quality=75, optimize=True)
+                        buf.seek(0)
+                        return StreamingResponse(buf, media_type="image/jpeg")
+            except Exception as e:
+                print(f"[PDF Image Render Error] {e}")
+                
+    return {"success": False}

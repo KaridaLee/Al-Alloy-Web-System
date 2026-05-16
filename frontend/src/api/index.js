@@ -47,10 +47,13 @@ export const getSettings = () => http.get('/api/system/settings')
 export const saveSettings = (data) => http.post('/api/system/settings', data)
 export const exportRecords = (data) => http.post('/api/search/export', data, { responseType: 'blob' })
 export const getBrandTrends = (brand) => http.get('/api/dashboard/brand-trends', { params: { brand } })
-
-// --- 新增：原始 Excel 台账文件直传接口 ---
 export const uploadExcel = (formData) => http.post('/api/system/upload', formData, {
   headers: { 'Content-Type': 'multipart/form-data' }
 })
+
+export const searchStandards = (params) => http.get('/api/search/standards', { params })
+export const getStandardDetail = (params) => http.get('/api/search/standards/detail', { params })
+// 新增：获取 PDF 页数以便生成压缩图像占位
+export const getStandardPdfInfo = (params) => http.get(`/api/search/standards/file/${encodeURIComponent(params.brand_name)}/info`)
 
 export default http
