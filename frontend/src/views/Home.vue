@@ -21,7 +21,7 @@
       <el-col :span="12">
         <el-card class="block-card">
           <template #header>
-            <div style="font-weight:700;">各工作表数据量</div>
+            <div style="font-weight:700;">各工作表数据量 (5秒轮播)</div>
           </template>
           <div ref="sheetChartRef" style="height:300px;"></div>
         </el-card>
@@ -84,6 +84,12 @@ let brandChartInstance = null
 const trendChartInstances = [null, null, null, null]
 const trendIntervals = [null, null, null, null]
 
+// 工作表柱状图轮播控制参数
+const SHEET_PAGE_SIZE = 10
+const SHEET_SWITCH_INTERVAL = 5000
+let currentSheetPage = 0
+let sheetChartInterval = null
+
 // 4个模块的状态
 const trendModules = reactive([
   { selectedBrand: '', currentElementIdx: 0, data: null },
@@ -96,11 +102,9 @@ const loadData = async () => {
   const { data } = await getOverview()
   overview.value = data
   
-  // 默认给4个模块赋初始牌号（如果存在）
   if (data.brandStats && data.brandStats.length > 0) {
     for (let i = 0; i < 4; i++) {
       if (!trendModules[i].selectedBrand) {
-        // 自动分配前四个热门牌号
         const brandObj = data.brandStats[i % data.brandStats.length]
         trendModules[i].selectedBrand = brandObj.name
         handleBrandChange(i)
@@ -111,18 +115,54 @@ const loadData = async () => {
   await renderBaseCharts()
 }
 
-// 渲染基础的两个图表（工作表数据量柱状图 & 牌号分布饼图）
+// 渲染工作表当前分页的数据
+const renderSheetChartPage = () => {
+  if (!sheetChartInstance || !overview.value.sheetStats) return
+  const allStats = overview.value.sheetStats
+  const total = allStats.length
+  const totalPages = Math.ceil(total / SHEET_PAGE_SIZE) || 1
+  
+  if (currentSheetPage >= totalPages) currentSheetPage = 0
+  
+  const start = currentSheetPage * SHEET_PAGE_SIZE
+  const end = Math.min(start + SHEET_PAGE_SIZE, total)
+  const pageData = allStats.slice(start, end)
+  
+  sheetChartInstance.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 45, right: 20, top: 30, bottom: 60 },
+    xAxis: { 
+      type: 'category', 
+      data: pageData.map(i => i.sheetName), 
+      axisLabel: { rotate: 25, fontSize: 10, interval: 0 } 
+    },
+    yAxis: { type: 'value' },
+    series: [{ 
+      type: 'bar', 
+      data: pageData.map(i => i.rowCount), 
+      itemStyle: { color: '#3b82f6' } 
+    }]
+  }, true)
+}
+
+// 启动工作表数据量柱状图的轮播任务
+const startSheetChartCarousel = () => {
+  if (sheetChartInterval) clearInterval(sheetChartInterval)
+  sheetChartInterval = setInterval(() => {
+    if (!overview.value.sheetStats || overview.value.sheetStats.length <= SHEET_PAGE_SIZE) return
+    const totalPages = Math.ceil(overview.value.sheetStats.length / SHEET_PAGE_SIZE)
+    currentSheetPage = (currentSheetPage + 1) % totalPages
+    renderSheetChartPage()
+  }, SHEET_SWITCH_INTERVAL)
+}
+
 const renderBaseCharts = async () => {
   await nextTick()
   if (sheetChartRef.value) {
     sheetChartInstance = echarts.init(sheetChartRef.value)
-    sheetChartInstance.setOption({
-      tooltip: { trigger: 'axis' },
-      grid: { left: 40, right: 20, top: 30, bottom: 60 },
-      xAxis: { type: 'category', data: (overview.value.sheetStats || []).map(i => i.sheetName), axisLabel: { rotate: 20 } },
-      yAxis: { type: 'value' },
-      series: [{ type: 'bar', data: (overview.value.sheetStats || []).map(i => i.rowCount), itemStyle: { color: '#3b82f6' } }]
-    })
+    currentSheetPage = 0
+    renderSheetChartPage()
+    startSheetChartCarousel()
   }
   if (brandChartRef.value) {
     brandChartInstance = echarts.init(brandChartRef.value)
@@ -133,12 +173,10 @@ const renderBaseCharts = async () => {
   }
 }
 
-// 处理牌号切换逻辑
 const handleBrandChange = async (index) => {
   const module = trendModules[index]
   if (!module.selectedBrand) return
 
-  // 清除旧的定时任务
   if (trendIntervals[index]) clearInterval(trendIntervals[index])
 
   try {
@@ -158,7 +196,6 @@ const handleBrandChange = async (index) => {
   }
 }
 
-// 渲染具体的趋势折线图（单帧元素展示）
 const renderTrendChart = (index) => {
   const instance = trendChartInstances[index]
   const module = trendModules[index]
@@ -204,7 +241,6 @@ const renderTrendChart = (index) => {
   }, true)
 }
 
-// 启动 5 秒一次的元素轮播定时器
 const startTrendCarousel = (index) => {
   trendIntervals[index] = setInterval(() => {
     const module = trendModules[index]
@@ -218,9 +254,9 @@ const startTrendCarousel = (index) => {
 onMounted(loadData)
 
 onBeforeUnmount(() => {
-  // 销毁所有图表实例和定时器，释放内存
   if (sheetChartInstance) sheetChartInstance.dispose()
   if (brandChartInstance) brandChartInstance.dispose()
+  if (sheetChartInterval) clearInterval(sheetChartInterval)
   trendChartInstances.forEach(ins => ins && ins.dispose())
   trendIntervals.forEach(inv => inv && clearInterval(inv))
 })

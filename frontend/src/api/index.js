@@ -46,8 +46,11 @@ export const getRecordDetail = (params) => http.get('/api/search/detail', { para
 export const getSettings = () => http.get('/api/system/settings')
 export const saveSettings = (data) => http.post('/api/system/settings', data)
 export const exportRecords = (data) => http.post('/api/search/export', data, { responseType: 'blob' })
-
-// --- 新增：获取牌号趋势数据 ---
 export const getBrandTrends = (brand) => http.get('/api/dashboard/brand-trends', { params: { brand } })
+
+// --- 新增：原始 Excel 台账文件直传接口 ---
+export const uploadExcel = (formData) => http.post('/api/system/upload', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' }
+})
 
 export default http

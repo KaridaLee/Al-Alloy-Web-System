@@ -28,23 +28,50 @@
           <el-button type="success" @click="handleSyncAll" :loading="syncing">立即同步目录全部Excel</el-button>
         </el-form-item>
       </el-form>
-
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-top:12px;"
-        title="说明"
-        description="当前同步模式支持手动同步和Cron定时同步。目录同步会扫描设置目录下所有 xlsx 文件并导入同一个数据库。"
-      />
     </el-card>
+
+    <el-card class="block-card">
+      <template #header>
+        <div style="font-weight:700;">Excel 台账原始文件直传</div>
+      </template>
+      
+      <div style="max-width: 600px; margin: 10px 0;">
+        <el-upload
+          drag
+          action=""
+          :http-request="handleCustomUpload"
+          accept=".xlsx"
+          :show-file-list="true"
+          multiple
+        >
+          <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+          <div class="el-upload__text">
+            将需要转换的台账 .xlsx 文件拖到此处，或 <em>点击上传</em>
+          </div>
+          <template #tip>
+            <div class="el-upload__tip" style="color: #94a3b8; margin-top: 8px;">
+              提示：上传后文件将直接保存在系统的同步源目录中（当前配置为: {{ settings.sourceDir }}）。上传完成后，可点击上方的“立即同步目录全部Excel”进行本地指纹库增量解析。
+            </div>
+          </template>
+        </el-upload>
+      </div>
+    </el-card>
+
+    <el-alert
+      style="margin-top:18px;"
+      title="说明"
+      type="info"
+      :closable="false"
+      description="当前同步模式支持手动同步和Cron定时同步。目录同步与上传功能会自动对应设置目录。通过指纹识别引擎，系统将仅对有改动或新增的数据进行数据库操作。"
+    />
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSettings, saveSettings, syncAllExcels } from '../api'
+import { UploadFilled } from '@element-plus/icons-vue'
+import { getSettings, saveSettings, syncAllExcels, uploadExcel } from '../api'
 
 const saving = ref(false)
 const syncing = ref(false)
@@ -74,10 +101,11 @@ const handleSave = async () => {
       syncMode: settings.syncMode,
       cron: settings.cron
     })
-    ElMessage.success('设置已保存')
+    ElMessage.success('设置已成功保存')
   } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || e?.message || '保存失败')
-  } finally {
+    console.error(e)
+    ElMessage.error('保存设置失败')
+  } fill: {
     saving.value = false
   }
 }
@@ -85,14 +113,59 @@ const handleSave = async () => {
 const handleSyncAll = async () => {
   syncing.value = true
   try {
-    await syncAllExcels()
-    ElMessage.success('目录同步完成')
+    const { data } = await syncAllExcels()
+    if (data.success) {
+      ElMessage.success(`增量同步完成！新增: ${data.added_count} 条，修改: ${data.updated_count} 条，删除: ${data.deleted_count} 条`)
+    } else {
+      ElMessage.warning(data.message || '没有检测到待同步文件')
+    }
   } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || e?.message || '目录同步失败')
+    console.error(e)
+    ElMessage.error('同步出现严重异常，请检查本地源目录文件')
   } finally {
     syncing.value = false
   }
 }
 
-onMounted(loadSettings)
+// 处理自定义文件上传逻辑
+const handleCustomUpload = async (options) => {
+  const formData = new FormData()
+  formData.append('file', options.file)
+  
+  try {
+    const { data } = await uploadExcel(formData)
+    if (data.success) {
+      ElMessage.success(data.message || '文件上传并保存成功')
+      options.onSuccess(data)
+    } else {
+      ElMessage.error(data.message || '文件保存失败')
+      options.onError(new Error(data.message))
+    }
+  } catch (err) {
+    console.error('上传接口调用异常:', err)
+    ElMessage.error('上传服务发生错误，请检查后端运行状态')
+    options.onError(err)
+  }
+}
+
+onMounted(() => {
+  loadSettings()
+})
 </script>
+
+<style scoped>
+.block-card {
+  border-radius: 12px;
+  transition: all 0.3s;
+}
+.block-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.05);
+}
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: #1e293b;
+}
+</style>
