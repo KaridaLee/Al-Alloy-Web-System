@@ -131,17 +131,12 @@ const handleSyncAll = async () => {
   }
 }
 
-// 触发企业标准的批量提取
 const handleSyncStandards = async () => {
   syncingStandards.value = true
   try {
     const { data } = await syncAllStandards()
     if (data.success) {
-      if (data.failed_list && data.failed_list.length > 0) {
-        ElMessage.warning(`提取完成！成功处理: ${data.success_count} 个，解析失败: ${data.failed_list.length} 个（请检查格式）`)
-      } else {
-        ElMessage.success(`完美提取！成功处理并更新了 ${data.success_count} 份企业标准核心成分数据。`)
-      }
+      ElMessage.success(`提取完成！成功处理: ${data.success_count} 个，失败: ${data.failed_list?.length || 0} 个`)
     } else {
       ElMessage.warning(data.message || '企业标准提取操作未能正常执行')
     }
@@ -156,7 +151,6 @@ const handleSyncStandards = async () => {
 const handleCustomUpload = async (options) => {
   const formData = new FormData()
   formData.append('file', options.file)
-  
   try {
     const { data } = await uploadExcel(formData)
     if (data.success) {
@@ -168,7 +162,7 @@ const handleCustomUpload = async (options) => {
     }
   } catch (err) {
     console.error('上传接口调用异常:', err)
-    ElMessage.error('上传服务发生错误，请检查后端运行状态')
+    ElMessage.error('上传服务发生错误')
     options.onError(err)
   }
 }
