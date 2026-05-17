@@ -45,9 +45,9 @@
         <h3 style="margin-top:0;color:#1e293b;">牌号：{{ selectedStandard.brand_name }}</h3>
         
         <el-card class="box-card" style="margin-bottom:14px;" shadow="never">
-          <template #header><span style="font-weight:700;">化学元素范围要求</span></template>
+          <template #header><span style="font-weight:700;">化学元素成分范围要求</span></template>
           <el-table :data="elementGridData" border stripe size="small" style="width:100%;">
-            <el-table-column prop="element" label="元素" width="80" />
+            <el-table-column prop="element" label="元素" width="80" align="center" />
             <el-table-column prop="tech" label="技术范围要求">
               <template #default="{ row }">{{ row.tech || '0% - 100% (默认)' }}</template>
             </el-table-column>
@@ -55,36 +55,6 @@
               <template #default="{ row }">{{ row.ctrl || '0% - 100% (默认)' }}</template>
             </el-table-column>
           </el-table>
-        </el-card>
-
-        <el-card class="box-card" style="margin-bottom:14px;" shadow="never">
-          <template #header><span style="font-weight:700;">物理机械性能</span></template>
-          <el-table :data="mechGridData" border stripe size="small" style="width:100%;">
-            <el-table-column prop="prop" label="性能项目" width="140" />
-            <el-table-column prop="val" label="标准规定值">
-              <template #default="{ row }">{{ row.val || '未做硬性规定 (留空)' }}</template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
-        <el-card class="box-card" shadow="never">
-          <template #header><span style="font-weight:700;">取样送检与发货规范</span></template>
-          <div style="font-size:12px; color:#475569; line-height:1.6;">
-            <div style="margin-bottom:8px;">
-              <strong>发货试样存根：</strong>
-              <ul v-if="selectedStandard.samples?.发货试样?.length > 0" style="margin:4px 0; padding-left:20px;">
-                <li v-for="(s, i) in selectedStandard.samples.发货试样" :key="i">{{ s }}</li>
-              </ul>
-              <span v-else style="color:#94a3b8;">暂无发货特殊采样性描述</span>
-            </div>
-            <div>
-              <strong>送检试验样模：</strong>
-              <ul v-if="selectedStandard.samples?.送检试样?.length > 0" style="margin:4px 0; padding-left:20px;">
-                <li v-for="(s, i) in selectedStandard.samples.送检试样" :key="i">{{ s }}</li>
-              </ul>
-              <span v-else style="color:#94a3b8;">暂无送检特殊采样性描述</span>
-            </div>
-          </div>
         </el-card>
       </div>
     </el-drawer>
@@ -176,14 +146,6 @@ const elementGridData = computed(() => {
     element: el,
     tech: tech[el],
     ctrl: ctrl[el]
-  }))
-})
-
-const mechGridData = computed(() => {
-  if (!selectedStandard.value || !selectedStandard.value.mech_props) return []
-  return Object.entries(selectedStandard.value.mech_props).map(([propName, propVal]) => ({
-    prop: propName,
-    val: propVal
   }))
 })
 

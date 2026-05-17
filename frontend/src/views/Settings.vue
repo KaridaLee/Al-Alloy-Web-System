@@ -26,6 +26,7 @@
         <el-form-item>
           <el-button type="primary" @click="handleSave" :loading="saving">保存设置</el-button>
           <el-button type="success" @click="handleSyncAll" :loading="syncing">立即同步目录全部Excel</el-button>
+          <el-button type="warning" @click="handleSyncStandards" :loading="syncingStandards">提取目录全部企业标准</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -52,7 +53,7 @@
             <div class="el-upload__tip" style="color: #94a3b8; margin-top: 8px;">
               提示：系统会自动识别文件。<br/>
               - <strong>.xlsx 文件</strong> 将保存在同步源目录，等待增量同步。<br/>
-              - <strong>.pdf 文件</strong> 将存入 data/standards 目录，并自动解析核心指标存入独立的企业标准数据库 (standards.db)。
+              - <strong>.pdf 文件</strong> 将存入 data/standards 目录，保存后请点击上方的【提取目录全部企业标准】进行统一解析提取。
             </div>
           </template>
         </el-upload>
@@ -73,10 +74,11 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { getSettings, saveSettings, syncAllExcels, uploadExcel } from '../api'
+import { getSettings, saveSettings, syncAllExcels, uploadExcel, syncAllStandards } from '../api'
 
 const saving = ref(false)
 const syncing = ref(false)
+const syncingStandards = ref(false)
 
 const settings = reactive({
   sourceDir: 'data/source',
@@ -126,6 +128,28 @@ const handleSyncAll = async () => {
     ElMessage.error('同步出现严重异常，请检查本地源目录文件')
   } finally {
     syncing.value = false
+  }
+}
+
+// 触发企业标准的批量提取
+const handleSyncStandards = async () => {
+  syncingStandards.value = true
+  try {
+    const { data } = await syncAllStandards()
+    if (data.success) {
+      if (data.failed_list && data.failed_list.length > 0) {
+        ElMessage.warning(`提取完成！成功处理: ${data.success_count} 个，解析失败: ${data.failed_list.length} 个（请检查格式）`)
+      } else {
+        ElMessage.success(`完美提取！成功处理并更新了 ${data.success_count} 份企业标准核心成分数据。`)
+      }
+    } else {
+      ElMessage.warning(data.message || '企业标准提取操作未能正常执行')
+    }
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('提取企业标准出现网络或服务器层异常')
+  } finally {
+    syncingStandards.value = false
   }
 }
 

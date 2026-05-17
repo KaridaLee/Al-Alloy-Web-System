@@ -277,8 +277,9 @@ def get_standard_detail(brand_name: str = Query(...)):
 
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
+        # 仅查询成分数据
         row = conn.execute(
-            'SELECT * FROM enterprise_standard WHERE brand_name = ?',
+            'SELECT brand_name, tech_req_json, ctrl_req_json, updated_at FROM enterprise_standard WHERE brand_name = ?',
             (brand_name,)
         ).fetchone()
 
@@ -289,8 +290,6 @@ def get_standard_detail(brand_name: str = Query(...)):
         try:
             res["tech_req"] = json.loads(res["tech_req_json"]) if res.get("tech_req_json") else {}
             res["ctrl_req"] = json.loads(res["ctrl_req_json"]) if res.get("ctrl_req_json") else {}
-            res["mech_props"] = json.loads(res["mech_props_json"]) if res.get("mech_props_json") else {}
-            res["samples"] = json.loads(res["samples_json"]) if res.get("samples_json") else {}
         except Exception:
             pass
 
