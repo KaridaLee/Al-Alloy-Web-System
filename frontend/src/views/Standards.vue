@@ -83,7 +83,8 @@
                 <el-button v-if="!isEditing" type="primary" size="small" @click="enterEditMode">
                   编辑范围指标
                 </el-button>
-                <div v-else>
+                <div v-else style="display: flex; gap: 8px;">
+                  <el-button type="warning" size="small" @click="importJsonDialogVisible = true">导入 JSON</el-button>
                   <el-button size="small" @click="cancelEdit">取消</el-button>
                   <el-button type="success" size="small" :loading="saving" @click="saveEdit">
                     保存至数据库
@@ -159,6 +160,29 @@
       </div>
     </el-dialog>
 
+    <el-dialog
+      v-model="importJsonDialogVisible"
+      title="导入 JSON 配置数据"
+      width="50%"
+      destroy-on-close
+    >
+      <div style="margin-bottom: 12px; font-size: 13px; color: #64748b;">
+        请将符合格式要求的 JSON 文本粘贴在下方，系统会自动解析范围规则（如 ≤ 会自动解析下限为 0）。
+      </div>
+      <el-input
+        v-model="jsonInputData"
+        type="textarea"
+        :rows="12"
+        placeholder='{"牌号命名":"...", "化学成分":{"Si":{"技术要求":"11.0-12.5","内控要求":"11.2-11.8"}}}'
+      />
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="importJsonDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleImportJson">解析并填入表单</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
   </div>
 </template>
 
@@ -202,7 +226,7 @@ const openPdfViewer = (filename) => {
 }
 
 
-// --- DB 数据模块相关 ---
+// --- DB 数据与编辑模块相关 ---
 const searchBrand = ref('')
 const tableData = ref([])
 const activeBrand = ref('')
@@ -211,6 +235,10 @@ const selectedStandard = ref(null)
 const isEditing = ref(false)
 const saving = ref(false)
 const editFormData = ref({})
+
+// JSON导入相关
+const importJsonDialogVisible = ref(false)
+const jsonInputData = ref('')
 
 const fetchStandards = async () => {
   const { data } = await searchStandards({ brand_name: searchBrand.value })
@@ -232,7 +260,6 @@ const handleRowSelect = async (currentRow) => {
   }
 }
 
-// 提取有数据的行，用于视图模式显示
 const viewGridData = computed(() => {
   if (!selectedStandard.value || !selectedStandard.value.tech_req) return []
   return ELEMENTS_ORDER.filter(el => {
@@ -244,7 +271,6 @@ const viewGridData = computed(() => {
   }))
 })
 
-// 进入编辑模式时，初始化 29 个元素的表单模型
 const enterEditMode = () => {
   const initData = {}
   ELEMENTS_ORDER.forEach(el => {
@@ -267,11 +293,82 @@ const cancelEdit = () => {
   isEditing.value = false
 }
 
-// 保存数据
+// 核心解析函数：转换字符串规则（包含 - 或者 ≤ 的规则）为最大最小值
+const parseRangeString = (strVal) => {
+  let min = ''
+  let max = ''
+  if (!strVal || strVal === '-' || strVal === '—') return { min, max }
+  
+  const cleanedVal = strVal.trim()
+  
+  if (cleanedVal.includes('-')) {
+    const parts = cleanedVal.split('-')
+    min = parts[0].trim()
+    max = parts[1].trim()
+  } else if (cleanedVal.includes('≤')) {
+    min = '0'
+    max = cleanedVal.replace('≤', '').trim()
+  } else if (cleanedVal.includes('<')) {
+    min = '0'
+    max = cleanedVal.replace('<', '').trim()
+  } else {
+    // 只有一个具体数值时，作为上限处理
+    max = cleanedVal
+  }
+  return { min, max }
+}
+
+const handleImportJson = () => {
+  if (!jsonInputData.value) {
+    ElMessage.warning('请输入 JSON 数据')
+    return
+  }
+  
+  try {
+    const parsedData = JSON.parse(jsonInputData.value)
+    const chemData = parsedData['化学成分'] || parsedData['成分要求']
+    
+    if (!chemData) {
+      ElMessage.warning('未在 JSON 中找到“化学成分”字段')
+      return
+    }
+    
+    // 如果 JSON 中的牌号命名与当前不匹配给出提示，但不阻止覆盖
+    if (parsedData['牌号命名'] && !parsedData['牌号命名'].includes(activeBrand.value) && !activeBrand.value.includes(parsedData['牌号命名'])) {
+      ElMessage.warning(`提示：JSON牌号【${parsedData['牌号命名']}】与当前所选【${activeBrand.value}】似乎不一致`)
+    }
+    
+    let importedCount = 0
+    Object.entries(chemData).forEach(([el, rules]) => {
+      // 在支持的元素内才进行覆盖
+      if (editFormData.value[el]) {
+        const techStr = rules['技术要求'] || ''
+        const ctrlStr = rules['内控要求'] || ''
+        
+        const techObj = parseRangeString(techStr)
+        const ctrlObj = parseRangeString(ctrlStr)
+        
+        editFormData.value[el].tech_min = techObj.min
+        editFormData.value[el].tech_max = techObj.max
+        editFormData.value[el].ctrl_min = ctrlObj.min
+        editFormData.value[el].ctrl_max = ctrlObj.max
+        importedCount++
+      }
+    })
+    
+    ElMessage.success(`导入成功，共解析了 ${importedCount} 个元素的指标（点击“保存至数据库”生效）`)
+    importJsonDialogVisible.value = false
+    jsonInputData.value = ''
+    
+  } catch (error) {
+    ElMessage.error('JSON 格式异常，请检查是否符合标准的键值对规范！')
+    console.error(error)
+  }
+}
+
 const saveEdit = async () => {
   saving.value = true
   
-  // 过滤掉完全没填的空行数据，减轻数据库负担
   const validElements = {}
   Object.entries(editFormData.value).forEach(([el, vals]) => {
     if (vals.tech_min || vals.ctrl_min || vals.ctrl_max || vals.tech_max) {
@@ -289,7 +386,6 @@ const saveEdit = async () => {
     if (data.success) {
       ElMessage.success('指标保存成功！')
       isEditing.value = false
-      // 刷新当前牌号的数据呈现
       handleRowSelect({ brand_name: activeBrand.value })
     }
   } catch (e) {
