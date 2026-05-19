@@ -1,395 +1,134 @@
 import hashlib
-import re
-from datetime import datetime
-from openpyxl import load_workbook
+import json
+import openpyxl
 
-ELEMENTS_ORDER = [
-    "Al", "Si", "Cu", "Mg", "Mn", "Ti", "Fe", "Zn", "Ni", "Pb", "Sn",
-    "Sr", "Zr", "Cr", "Ca", "Sb", "Cd", "As", "B", "Be", "Bi", "Co",
-    "Ga", "Hg", "Li", "Mo", "Na", "P", "V"
-]
-ELEMENTS = set(ELEMENTS_ORDER)
+def build_row_hash(row_data: dict) -> str:
+    """生成单行数据的指纹"""
+    filtered_data = {k: v for k, v in row_data.items() if not k.startswith("__")}
+    sorted_items = sorted(filtered_data.items(), key=lambda x: x[0])
+    row_str = json.dumps(sorted_items, ensure_ascii=False)
+    return hashlib.md5(row_str.encode('utf-8')).hexdigest()
 
-BASE_FIELDS_CANONICAL = [
-    "序号", "炉号", "牌号", "批次号", "班组_班长", "针孔度判定", "检测时间时间"
-]
+def clean_column_name(col_val, col_index) -> str:
+    """终极强力清洗：抹除换行、回车、空格和引发SQL崩溃的引号"""
+    if col_val is None:
+        return f"Unnamed_{col_index}"
+    
+    # 彻底清除不可见字符和非法引号
+    cleaned = str(col_val).replace('\n', '').replace('\r', '').replace(' ', '').replace('"', '').replace("'", "").strip()
+    
+    if not cleaned:
+        return f"Unnamed_{col_index}"
+    return cleaned
 
-TAIL_FIELDS_TEMPLATE = [
-    "判定", "判定人", "发货", "备注", "烂泥指数", "低于内控", "高于内控", "低于内控_高于内控"
-]
+def parse_single_sheet(file_path: str, sheet_name: str):
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb[sheet_name]
 
-PREFERRED_KEY_GROUPS = [
-    ["炉号", "批次号"],
-    ["炉号", "牌号", "批次号"],
-    ["序号"],
-    ["炉号", "检测时间时间"],
-]
+    max_row = ws.max_row
+    max_col = ws.max_column
 
+    if max_row == 0 or max_col == 0:
+        return None
 
-def normalize_text(value):
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.isoformat(sep="T", timespec="seconds")
-    return str(value).strip().replace("\n", "").replace("\r", "")
-
-
-def normalize_column_name(name: str) -> str:
-    if not name:
-        return ""
-    name = str(name).strip()
-    name = name.replace("/", "_")
-    name = name.replace("\n", "")
-    name = name.replace("\r", "")
-    name = name.replace(" ", "")
-    return name
-
-
-def fill_merged_value(sheet, row, col):
-    value = sheet.cell(row, col).value
-    if value is not None:
-        return value
-
-    for merged_range in sheet.merged_cells.ranges:
-        if (
-            merged_range.min_row <= row <= merged_range.max_row
-            and merged_range.min_col <= col <= merged_range.max_col
-        ):
-            return sheet.cell(merged_range.min_row, merged_range.min_col).value
-    return None
-
-
-def is_non_empty(value):
-    return normalize_text(value) != ""
-
-
-def normalize_element_header(value: str):
-    """
-    将元素类表头统一规范化：
-    例如：
-    - Cu
-    - Cu(≤0.1)
-    - Cu (≤0.1)
-    - Fe         (≤0.2)
-    - P(0.0035-0.0070)
-    统一映射为：
-    - Cu
-    - Fe
-    - P
-    """
-    text = normalize_text(value)
-    if not text:
-        return ""
-
-    # 去掉所有空白，便于统一识别
-    compact = re.sub(r"\s+", "", text)
-
-    # 先直接检查纯元素
-    if compact in ELEMENTS:
-        return compact
-
-    # 匹配形如 Cu(≤0.1) / Fe(≤0.2) / P(0.0035-0.0070)
-    match = re.match(r"^([A-Z][a-z]?)(\(.*\))?$", compact)
-    if match:
-        elem = match.group(1)
-        if elem in ELEMENTS:
-            return elem
-
-    return ""
-
-
-def detect_header_rows(sheet):
-    """
-    你的模板基本固定：
-    第1行标题
-    第2-3行表头
-    第4行开始数据
-    """
-    if sheet.max_row >= 4:
-        return 2, 3, 4
-    return 1, 1, 2
-
-
-def detect_effective_max_col(sheet, header_top_row, header_bottom_row, max_scan_cols=120, empty_limit=12):
-    max_col = min(sheet.max_column, max_scan_cols)
-
-    last_non_empty_col = 0
-    consecutive_empty = 0
-
-    probe_rows = [header_top_row, header_bottom_row]
-    if header_bottom_row + 1 <= sheet.max_row:
-        probe_rows.append(header_bottom_row + 1)
-
-    for c in range(1, max_col + 1):
-        has_value = False
-        for r in probe_rows:
-            if is_non_empty(sheet.cell(r, c).value):
-                has_value = True
+    # 1. 定位表头底部行 (寻找“炉号”或“牌号”)
+    header_bottom_row = 1
+    found_header = False
+    for r in range(1, min(10, max_row + 1)):
+        for c in range(1, max_col + 1):
+            val = ws.cell(row=r, column=c).value
+            if val and isinstance(val, str) and ("炉号" in val or "牌号" in val):
+                header_bottom_row = r
+                found_header = True
                 break
-
-        if has_value:
-            last_non_empty_col = c
-            consecutive_empty = 0
-        else:
-            consecutive_empty += 1
-            if consecutive_empty >= empty_limit and last_non_empty_col > 0:
-                break
-
-    if last_non_empty_col == 0:
-        last_non_empty_col = min(max_col, 40)
-
-    return last_non_empty_col
-
-
-def canonical_base_field(top_val, bottom_val):
-    top_val = normalize_column_name(top_val)
-    bottom_val = normalize_column_name(bottom_val)
-
-    combined = f"{top_val}_{bottom_val}".strip("_")
-
-    if top_val == "序号" or bottom_val == "序号":
-        return "序号"
-    if top_val == "炉号" or bottom_val == "炉号":
-        return "炉号"
-    if top_val == "牌号" or bottom_val == "牌号":
-        return "牌号"
-    if top_val == "批次号" or bottom_val == "批次号":
-        return "批次号"
-    if top_val in ("班组_班长", "班组/班长") or bottom_val in ("班组_班长", "班组/班长"):
-        return "班组_班长"
-    if top_val == "针孔度判定" or bottom_val == "针孔度判定":
-        return "针孔度判定"
-
-    if top_val == "检测时间" and bottom_val == "时间":
-        return "检测时间时间"
-    if combined == "检测时间_时间":
-        return "检测时间时间"
-    if top_val == "检测时间时间" or bottom_val == "检测时间时间":
-        return "检测时间时间"
-    if top_val == "检测时间" and not bottom_val:
-        return "检测时间时间"
-
-    return ""
-
-
-def build_headers_fixed(sheet, header_top_row, header_bottom_row, effective_max_col):
-    columns = []
-    col_map = []
-
-    raw_info = []
-    for c in range(1, effective_max_col + 1):
-        top_val = normalize_text(fill_merged_value(sheet, header_top_row, c))
-        bottom_val = normalize_text(fill_merged_value(sheet, header_bottom_row, c))
-
-        raw_info.append({
-            "col": c,
-            "top": top_val,
-            "bottom": bottom_val
-        })
-
-    # 找元素区
-    element_positions = []
-    for info in raw_info:
-        normalized_elem = normalize_element_header(info["bottom"])
-        if normalized_elem:
-            element_positions.append(info["col"])
-
-    first_element_col = min(element_positions) if element_positions else None
-    last_element_col = max(element_positions) if element_positions else None
-
-    seen = {}
-
-    def add_col(col_index, name):
-        if not name:
-            return
-        final_name = name
-        if final_name in seen:
-            seen[final_name] += 1
-            final_name = f"{final_name}_{seen[final_name]}"
-        else:
-            seen[final_name] = 1
-
-        columns.append(final_name)
-        col_map.append((col_index, final_name))
-
-    # 前置基础字段
-    for info in raw_info:
-        c = info["col"]
-        if first_element_col and c >= first_element_col:
+        if found_header:
             break
 
-        field_name = canonical_base_field(info["top"], info["bottom"])
-        if field_name:
-            add_col(c, field_name)
+    # 2. 定位数据范围边界
+    min_col = 1
+    for c in range(1, max_col + 1):
+        if ws.cell(row=header_bottom_row, column=c).value is not None:
+            min_col = c
+            break
 
-    # 元素字段
-    if first_element_col and last_element_col:
-        for info in raw_info:
-            c = info["col"]
-            if c < first_element_col or c > last_element_col:
-                continue
+    effective_max_col = max_col
+    for c in range(max_col, min_col - 1, -1):
+        if ws.cell(row=header_bottom_row, column=c).value is not None:
+            effective_max_col = c
+            break
 
-            elem = normalize_element_header(info["bottom"])
-            if elem:
-                add_col(c, elem)
+    # ==========================================
+    # 核心修复点：提取并深度清洗表头，确保列名合法且绝对不重复
+    # ==========================================
+    headers = []
+    seen_headers = set()
+    
+    for col_idx in range(min_col, effective_max_col + 1):
+        val = ws.cell(row=header_bottom_row, column=col_idx).value
+        cleaned_col = clean_column_name(val, col_idx)
+        
+        # 绝对去重逻辑：如果清洗后发现列名重复，自动追加 _1, _2
+        final_col = cleaned_col
+        counter = 1
+        while final_col in seen_headers:
+            final_col = f"{cleaned_col}_{counter}"
+            counter += 1
+            
+        seen_headers.add(final_col)
+        headers.append(final_col)
 
-    # 元素区后的尾部字段
-    if last_element_col:
-        tail_start = last_element_col + 1
-        tail_fields_idx = 0
+    # 3. 提取数据行
+    data_start_row = header_bottom_row + 1
+    rows_data = []
 
-        for c in range(tail_start, effective_max_col + 1):
-            if tail_fields_idx >= len(TAIL_FIELDS_TEMPLATE):
-                break
-
-            top_val = normalize_text(fill_merged_value(sheet, header_top_row, c))
-            bottom_val = normalize_text(fill_merged_value(sheet, header_bottom_row, c))
-
-            if not normalize_column_name(top_val) and not normalize_column_name(bottom_val):
-                continue
-
-            add_col(c, TAIL_FIELDS_TEMPLATE[tail_fields_idx])
-            tail_fields_idx += 1
-    else:
-        # 兜底
-        for info in raw_info:
-            candidate = normalize_column_name(info["bottom"]) or normalize_column_name(info["top"])
-            if candidate and "台账" not in candidate and not candidate.startswith("化学成分"):
-                add_col(info["col"], candidate)
-
-    return columns, col_map
-
-
-def choose_key_columns(columns):
-    col_set = set(columns)
-
-    for group in PREFERRED_KEY_GROUPS:
-        if all(g in col_set for g in group):
-            return group
-
-    if "序号" in col_set:
-        return ["序号"]
-
-    if columns:
-        return [columns[0]]
-
-    return []
-
-
-def find_furnace_col_name(columns):
-    return "炉号" if "炉号" in columns else None
-
-
-def build_row_key(row_dict, key_columns, fallback_index):
-    parts = [str(row_dict.get(col, "")).strip() for col in key_columns]
-    joined = "|".join(parts).strip("|").strip()
-    if joined:
-        return joined
-    return f"__fallback__{fallback_index}"
-
-
-def build_row_hash(row_dict):
-    items = []
-    for k in sorted(row_dict.keys()):
-        if k == "__row_key":
-            continue
-        items.append(f"{k}={row_dict.get(k, '')}")
-    raw = "||".join(items)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def is_data_row_valid(row_dict, furnace_col_name=None):
-    if furnace_col_name and furnace_col_name in row_dict:
-        if str(row_dict.get(furnace_col_name, "")).strip() != "":
-            return True
-
-    return any(str(v).strip() != "" for v in row_dict.values())
-
-
-def read_effective_rows(sheet, data_start_row, col_map, key_columns, furnace_col_name=None, empty_limit=3):
-    rows = []
-    fallback_index = 1
-    consecutive_empty = 0
-
-    for r in range(data_start_row, sheet.max_row + 1):
+    for r_idx in range(data_start_row, max_row + 1):
+        is_empty_row = True
         row_dict = {}
-        for col_idx, col_name in col_map:
-            row_dict[col_name] = normalize_text(sheet.cell(r, col_idx).value)
+        for c_idx in range(min_col, effective_max_col + 1):
+            val = ws.cell(row=r_idx, column=c_idx).value
+            if val is not None and str(val).strip() != "":
+                is_empty_row = False
+            
+            # 使用清洗并去重后的表头作为 key
+            header_key = headers[c_idx - min_col]
+            row_dict[header_key] = val
 
-        if not is_data_row_valid(row_dict, furnace_col_name=furnace_col_name):
-            consecutive_empty += 1
-            if consecutive_empty >= empty_limit:
-                break
-            continue
+        if not is_empty_row:
+            rows_data.append({
+                "row_key": str(r_idx),
+                "data": row_dict
+            })
 
-        consecutive_empty = 0
+    # 4. 提取主键列
+    key_columns = []
+    if "炉号" in headers:
+        key_columns.append("炉号")
+    if "检测时间" in headers:
+        key_columns.append("检测时间")
+    elif "检测时间时间" in headers:
+        key_columns.append("检测时间时间")
 
-        row_key = build_row_key(row_dict, key_columns, fallback_index)
-        fallback_index += 1
-
-        row_dict["__row_key"] = row_key
-        row_hash = build_row_hash(row_dict)
-
-        rows.append({
-            "row_key": row_key,
-            "row_hash": row_hash,
-            "data": row_dict
-        })
-
-    return rows
-
+    return {
+        "sheet_name": sheet_name,
+        "table_name": f"tbl_{sheet_name}",
+        "columns": headers,
+        "key_columns": key_columns,
+        "header_top_row": 1,
+        "header_bottom_row": header_bottom_row,
+        "data_start_row": data_start_row,
+        "effective_max_col": effective_max_col,
+        "rows": rows_data
+    }
 
 def parse_workbook(file_path: str):
-    wb = load_workbook(file_path, data_only=True)
-    workbook_result = []
+    wb = openpyxl.load_workbook(file_path, read_only=True)
+    sheet_names = wb.sheetnames
+    wb.close()
 
-    for ws in wb.worksheets:
-        print(f"[PARSE] 开始分析工作表: {ws.title}")
-        print(f"[PARSE] 原始 max_row={ws.max_row}, max_column={ws.max_column}")
+    result = []
+    for sheet_name in sheet_names:
+        sheet_data = parse_single_sheet(file_path, sheet_name)
+        if sheet_data and len(sheet_data["rows"]) > 0:
+            result.append(sheet_data)
 
-        header_top_row, header_bottom_row, data_start_row = detect_header_rows(ws)
-        print(f"[PARSE] header_top_row={header_top_row}, header_bottom_row={header_bottom_row}, data_start_row={data_start_row}")
-
-        effective_max_col = detect_effective_max_col(
-            ws,
-            header_top_row,
-            header_bottom_row,
-            max_scan_cols=120,
-            empty_limit=12
-        )
-        print(f"[PARSE] 动态识别有效列数={effective_max_col}")
-
-        columns, col_map = build_headers_fixed(ws, header_top_row, header_bottom_row, effective_max_col)
-        print(f"[PARSE] 识别字段数={len(columns)}")
-        print(f"[PARSE] 字段预览={columns[:40]}")
-
-        key_columns = choose_key_columns(columns)
-        furnace_col_name = find_furnace_col_name(columns)
-
-        print(f"[PARSE] 选定 key_columns={key_columns}")
-        print(f"[PARSE] 识别炉号列={furnace_col_name}")
-
-        rows = read_effective_rows(
-            ws,
-            data_start_row,
-            col_map,
-            key_columns,
-            furnace_col_name=furnace_col_name,
-            empty_limit=3
-        )
-
-        print(f"[PARSE] 工作表 {ws.title} 最终有效数据行数={len(rows)}")
-
-        workbook_result.append({
-            "sheet_name": ws.title,
-            "table_name": f"sheet_{ws.title}".replace(" ", "_").replace("-", "_"),
-            "header_top_row": header_top_row,
-            "header_bottom_row": header_bottom_row,
-            "data_start_row": data_start_row,
-            "effective_max_col": effective_max_col,
-            "columns": columns,
-            "key_columns": key_columns,
-            "rows": rows
-        })
-
-    return workbook_result
+    return result

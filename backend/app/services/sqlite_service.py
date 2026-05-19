@@ -1,58 +1,45 @@
 import json
 from sqlalchemy import text
-from app.core.database import engine
-
-SYSTEM_TABLE_SQL = [
-    """
-    CREATE TABLE IF NOT EXISTS sys_sheet_meta (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sheet_name TEXT NOT NULL UNIQUE,
-        table_name TEXT NOT NULL,
-        columns_json TEXT NOT NULL,
-        key_columns_json TEXT,
-        header_info_json TEXT,
-        last_sync_time TEXT
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sys_row_fingerprint (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sheet_name TEXT NOT NULL,
-        row_key TEXT NOT NULL,
-        row_hash TEXT NOT NULL,
-        updated_at TEXT,
-        UNIQUE(sheet_name, row_key)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS sys_sync_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_path TEXT,
-        sync_time TEXT,
-        added_count INTEGER DEFAULT 0,
-        updated_count INTEGER DEFAULT 0,
-        deleted_count INTEGER DEFAULT 0,
-        status TEXT,
-        detail_json TEXT
-    )
-    """
-]
-
 
 def init_system_tables():
+    from app.core.database import engine
     with engine.begin() as conn:
-        for sql in SYSTEM_TABLE_SQL:
-            conn.execute(text(sql))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sys_sheet_meta (
+                sheet_name TEXT PRIMARY KEY,
+                table_name TEXT NOT NULL,
+                columns_json TEXT,
+                key_columns_json TEXT,
+                header_info_json TEXT,
+                last_sync_time TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sys_row_fingerprint (
+                global_row_key TEXT PRIMARY KEY,
+                sheet_name TEXT,
+                row_hash TEXT NOT NULL,
+                last_sync_time TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sys_sync_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT,
+                sync_time TEXT,
+                added_count INTEGER,
+                updated_count INTEGER,
+                deleted_count INTEGER,
+                status TEXT,
+                detail_json TEXT
+            )
+        """))
 
-
-def upsert_sheet_meta(conn, sheet_name, table_name, columns, key_columns, header_info, last_sync_time):
+def upsert_sheet_meta(conn, sheet_name, table_name, columns, key_columns, header_info, sync_time):
     conn.execute(text("""
-        INSERT INTO sys_sheet_meta(
-            sheet_name, table_name, columns_json, key_columns_json, header_info_json, last_sync_time
-        )
-        VALUES (
-            :sheet_name, :table_name, :columns_json, :key_columns_json, :header_info_json, :last_sync_time
-        )
+        INSERT INTO sys_sheet_meta 
+        (sheet_name, table_name, columns_json, key_columns_json, header_info_json, last_sync_time)
+        VALUES (:sn, :tn, :cj, :kcj, :hij, :st)
         ON CONFLICT(sheet_name) DO UPDATE SET
             table_name=excluded.table_name,
             columns_json=excluded.columns_json,
@@ -60,127 +47,112 @@ def upsert_sheet_meta(conn, sheet_name, table_name, columns, key_columns, header
             header_info_json=excluded.header_info_json,
             last_sync_time=excluded.last_sync_time
     """), {
-        "sheet_name": sheet_name,
-        "table_name": table_name,
-        "columns_json": json.dumps(columns, ensure_ascii=False),
-        "key_columns_json": json.dumps(key_columns, ensure_ascii=False),
-        "header_info_json": json.dumps(header_info, ensure_ascii=False),
-        "last_sync_time": last_sync_time
+        "sn": sheet_name,
+        "tn": table_name,
+        "cj": json.dumps(columns, ensure_ascii=False),
+        "kcj": json.dumps(key_columns, ensure_ascii=False),
+        "hij": json.dumps(header_info, ensure_ascii=False),
+        "st": sync_time
     })
 
-
-def create_business_table_if_not_exists(conn, table_name, columns):
-    defs = [
-        '"__row_key" TEXT PRIMARY KEY',
-        '"__raw_row_key" TEXT',
-        '"__source_file" TEXT',
-        '"__source_sheet" TEXT'
-    ]
+def create_business_table_if_not_exists(conn, table_name: str, columns: list):
+    col_defs = []
     for col in columns:
-        if col in ["__row_key", "__raw_row_key", "__source_file", "__source_sheet"]:
-            continue
-        defs.append(f'"{col}" TEXT')
-    sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" ({", ".join(defs)})'
+        # 防御性转义：将列名中的双引号替换为两个双引号，避免 SQL 注入式截断
+        safe_col = col.replace('"', '""')
+        col_defs.append(f'"{safe_col}" TEXT')
+        
+    cols_sql = ",\n".join(col_defs)
+    sql = f'''
+        CREATE TABLE IF NOT EXISTS "{table_name}" (
+            "__row_key" TEXT PRIMARY KEY,
+            "__raw_row_key" TEXT,
+            "__source_file" TEXT,
+            "__source_sheet" TEXT,
+            {cols_sql}
+        )
+    '''
     conn.execute(text(sql))
 
+def add_missing_columns(conn, table_name: str, columns: list):
+    pragma_rows = conn.execute(text(f'PRAGMA table_info("{table_name}")')).mappings().all()
+    existing_columns = {r["name"] for r in pragma_rows}
 
-def add_missing_columns(conn, table_name, columns):
-    existing = conn.execute(text(f'PRAGMA table_info("{table_name}")')).mappings().all()
-    existing_cols = {x["name"] for x in existing}
+    for col in columns:
+        if col not in existing_columns:
+            safe_col = col.replace('"', '""')
+            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{safe_col}" TEXT'))
 
-    builtin_cols = ["__row_key", "__raw_row_key", "__source_file", "__source_sheet"]
-    for col in builtin_cols + columns:
-        if col not in existing_cols:
-            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" TEXT'))
+def create_search_indexes(conn, table_name: str, columns: list):
+    if "炉号" in columns:
+        conn.execute(text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_luhao ON "{table_name}"("炉号")'))
+    if "牌号" in columns:
+        conn.execute(text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_paihao ON "{table_name}"("牌号")'))
+    if "检测时间" in columns:
+        conn.execute(text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_time ON "{table_name}"("检测时间")'))
+    elif "检测时间时间" in columns:
+        conn.execute(text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_time ON "{table_name}"("检测时间时间")'))
 
+def fetch_all_row_keys(conn, sheet_name: str) -> dict:
+    rows = conn.execute(text(
+        "SELECT global_row_key, row_hash FROM sys_row_fingerprint WHERE sheet_name = :sn"
+    ), {"sn": sheet_name}).mappings().all()
+    return {r["global_row_key"]: r["row_hash"] for r in rows}
 
-def create_search_indexes(conn, table_name, columns):
-    target_cols = ["炉号", "牌号", "批次号", "检测时间时间", "检测时间", "判定", "__source_file"]
-    all_cols = set(columns) | {"__source_file"}
-
-    for col in target_cols:
-        if col in all_cols:
-            idx_name = f'idx_{table_name}_{col}'.replace("-", "_")
-            conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{idx_name}" ON "{table_name}"("{col}")'))
-
-
-def fetch_all_row_keys(conn, sheet_name):
-    rows = conn.execute(text("""
-        SELECT row_key, row_hash
-        FROM sys_row_fingerprint
-        WHERE sheet_name = :sheet_name
-    """), {"sheet_name": sheet_name}).mappings().all()
-    return {r["row_key"]: r["row_hash"] for r in rows}
-
-
-def upsert_row_fingerprint(conn, sheet_name, row_key, row_hash, updated_at):
+def upsert_row_fingerprint(conn, sheet_name, global_row_key, row_hash, sync_time):
     conn.execute(text("""
-        INSERT INTO sys_row_fingerprint(sheet_name, row_key, row_hash, updated_at)
-        VALUES (:sheet_name, :row_key, :row_hash, :updated_at)
-        ON CONFLICT(sheet_name, row_key) DO UPDATE SET
+        INSERT INTO sys_row_fingerprint (global_row_key, sheet_name, row_hash, last_sync_time)
+        VALUES (:gk, :sn, :rh, :st)
+        ON CONFLICT(global_row_key) DO UPDATE SET
             row_hash=excluded.row_hash,
-            updated_at=excluded.updated_at
+            last_sync_time=excluded.last_sync_time
     """), {
-        "sheet_name": sheet_name,
-        "row_key": row_key,
-        "row_hash": row_hash,
-        "updated_at": updated_at
+        "gk": global_row_key,
+        "sn": sheet_name,
+        "rh": row_hash,
+        "st": sync_time
     })
 
+def delete_row_fingerprint(conn, sheet_name, global_row_key):
+    conn.execute(text(
+        "DELETE FROM sys_row_fingerprint WHERE global_row_key = :gk"
+    ), {"gk": global_row_key})
 
-def delete_row_fingerprint(conn, sheet_name, row_key):
-    conn.execute(text("""
-        DELETE FROM sys_row_fingerprint
-        WHERE sheet_name=:sheet_name AND row_key=:row_key
-    """), {
-        "sheet_name": sheet_name,
-        "row_key": row_key
-    })
-
-
-def upsert_business_row(conn, table_name, row_data):
+def upsert_business_row(conn, table_name, row_data: dict):
     cols = list(row_data.keys())
-    quoted_cols = [f'"{c}"' for c in cols]
-
-    param_map = {}
-    placeholders = []
-    update_cols = []
-
-    for i, col in enumerate(cols):
-        param_name = f"p_{i}"
-        param_map[param_name] = row_data[col]
-        placeholders.append(f":{param_name}")
-
-        if col != "__row_key":
-            update_cols.append(f'"{col}" = excluded."{col}"')
-
+    # 防御性转义所有的列名键
+    safe_col_names = [f'"{c.replace("`", "").replace(chr(34), chr(34)+chr(34))}"' for c in cols]
+    
+    col_names_str = ", ".join(safe_col_names)
+    placeholders = ", ".join([f":{i}" for i in range(len(cols))])
+    
+    updates = ", ".join([f'{safe_col_names[i]}=EXCLUDED.{safe_col_names[i]}' for i in range(len(cols)) if cols[i] != "__row_key"])
+    
     sql = f'''
-    INSERT INTO "{table_name}" ({", ".join(quoted_cols)})
-    VALUES ({", ".join(placeholders)})
-    ON CONFLICT("__row_key") DO UPDATE SET
-    {", ".join(update_cols)}
+        INSERT INTO "{table_name}" ({col_names_str})
+        VALUES ({placeholders})
+        ON CONFLICT("__row_key") DO UPDATE SET {updates}
     '''
-
-    conn.execute(text(sql), param_map)
-
+    
+    params = {str(i): row_data[cols[i]] for i in range(len(cols))}
+    conn.execute(text(sql), params)
 
 def delete_business_row(conn, table_name, row_key):
-    conn.execute(text(
-        f'DELETE FROM "{table_name}" WHERE "__row_key"=:row_key'
-    ), {"row_key": row_key})
-
+    conn.execute(text(f'DELETE FROM "{table_name}" WHERE "__row_key" = :rk'), {"rk": row_key})
 
 def insert_sync_log(file_path, sync_time, added_count, updated_count, deleted_count, status, detail_json):
+    from app.core.database import engine
     with engine.begin() as conn:
         conn.execute(text("""
-            INSERT INTO sys_sync_log(file_path, sync_time, added_count, updated_count, deleted_count, status, detail_json)
-            VALUES (:file_path, :sync_time, :added_count, :updated_count, :deleted_count, :status, :detail_json)
+            INSERT INTO sys_sync_log 
+            (file_path, sync_time, added_count, updated_count, deleted_count, status, detail_json)
+            VALUES (:fp, :st, :ac, :uc, :dc, :status, :dj)
         """), {
-            "file_path": file_path,
-            "sync_time": sync_time,
-            "added_count": added_count,
-            "updated_count": updated_count,
-            "deleted_count": deleted_count,
+            "fp": file_path,
+            "st": sync_time,
+            "ac": added_count,
+            "uc": updated_count,
+            "dc": deleted_count,
             "status": status,
-            "detail_json": detail_json
+            "dj": detail_json
         })
