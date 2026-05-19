@@ -245,12 +245,37 @@ def export_excel(req: ExportRequest):
 
 
 # ==========================================
-# 企标控制范围管理专属路由（已彻底精简）
+# 企标控制范围管理与 PDF 预览专属路由
 # ==========================================
+
+@router.get("/standards/pdfs")
+def list_standard_pdfs():
+    """直接读取 data/standards 目录下的所有 PDF 文件"""
+    from app.core.config import BASE_DIR
+    pdf_dir = BASE_DIR / "data" / "standards"
+    if not pdf_dir.exists():
+        return {"items": []}
+    
+    pdfs = []
+    for p in pdf_dir.glob("*.pdf"):
+        pdfs.append({"filename": p.name})
+    return {"items": pdfs}
+
+
+@router.get("/standards/pdfs/{filename}")
+def get_standard_pdf_file(filename: str):
+    """直接响应 PDF 文件流用于前端 iframe 预览"""
+    from app.core.config import BASE_DIR
+    from fastapi.responses import FileResponse
+    file_path = BASE_DIR / "data" / "standards" / filename
+    if file_path.exists():
+        return FileResponse(str(file_path), media_type="application/pdf")
+    return {"success": False, "message": "PDF文件不存在"}
+
 
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
-    """模糊查询受控企标列表"""
+    """模糊查询受控企标列表 (从 Word 提取进 DB 的数据)"""
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if not db_path.exists():

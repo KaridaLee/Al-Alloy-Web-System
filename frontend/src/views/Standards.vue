@@ -1,13 +1,39 @@
 <template>
   <div>
-    <div class="page-title">企业标准管理 — 企标范围</div>
+    <div class="page-title">企业标准管理</div>
 
+    <el-card class="block-card" style="margin-bottom: 24px;">
+      <template #header>
+        <div style="font-weight:700;">企业标准原件预览 (PDF)</div>
+      </template>
+
+      <el-table :data="pdfList" border stripe style="width:100%;" max-height="300">
+        <el-table-column type="index" label="序号" width="60" align="center" />
+        <el-table-column prop="filename" label="PDF 原件名称" />
+        <el-table-column label="操作" width="120" align="center">
+          <template #default="{ row }">
+            <el-button type="success" link @click="openPdfViewer(row.filename)">
+              查看原件
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      
+      <div v-if="pdfList.length === 0" style="text-align: center; color: #94a3b8; padding: 20px 0;">
+        data/standards 目录下暂无 PDF 文件
+      </div>
+    </el-card>
+
+    <div style="font-size: 18px; font-weight: 700; margin-bottom: 12px; color: #1e293b;">
+      企标元素范围数据
+    </div>
+    
     <el-row :gutter="18">
       <el-col :span="10">
         <el-card class="block-card">
           <template #header>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="font-weight:700;">受控企标文件</span>
+              <span style="font-weight:700;">已解析标准数据</span>
               <el-input
                 v-model="searchBrand"
                 placeholder="筛选牌号"
@@ -47,13 +73,13 @@
               <el-table-column prop="tech" label="技术范围要求 (规程线)" align="center">
                 <template #default="{ row }">
                   <el-tag v-if="row.tech" type="info" effect="plain">{{ row.tech }}</el-tag>
-                  <span v-else style="color: #94a3b8; font-size: 12px;">0% - 100% (默认宽松)</span>
+                  <span v-else style="color: #94a3b8; font-size: 12px;">0% - 100% (默认)</span>
                 </template>
               </el-table-column>
               <el-table-column prop="ctrl" label="企业内控要求 (精炼线)" align="center">
                 <template #default="{ row }">
                   <el-tag v-if="row.ctrl" type="success" effect="light">{{ row.ctrl }}</el-tag>
-                  <span v-else style="color: #94a3b8; font-size: 12px;">0% - 100% (默认宽松)</span>
+                  <span v-else style="color: #94a3b8; font-size: 12px;">0% - 100% (默认)</span>
                 </template>
               </el-table-column>
             </el-table>
@@ -63,13 +89,53 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-dialog
+      v-model="pdfDialogVisible"
+      :title="'原件预览：' + activePdfFile"
+      width="75%"
+      top="5vh"
+      destroy-on-close
+    >
+      <div style="height: 75vh; border: 1px solid #e2e8f0; border-radius: 4px;">
+        <iframe
+          v-if="activePdfFile"
+          :src="'/api/search/standards/pdfs/' + encodeURIComponent(activePdfFile)"
+          width="100%"
+          height="100%"
+          frameborder="0"
+          style="display: block;"
+        ></iframe>
+      </div>
+    </el-dialog>
+
   </div>
 </template>
 
 <script setup>
 import { onMounted, ref, computed } from 'vue'
-import { searchStandards, getStandardDetail } from '../api'
+import { searchStandards, getStandardDetail, getStandardPdfs } from '../api'
 
+// --- PDF 模块相关 ---
+const pdfList = ref([])
+const pdfDialogVisible = ref(false)
+const activePdfFile = ref('')
+
+const fetchPdfList = async () => {
+  try {
+    const { data } = await getStandardPdfs()
+    pdfList.value = data.items || []
+  } catch (e) {
+    console.error('获取 PDF 列表失败', e)
+  }
+}
+
+const openPdfViewer = (filename) => {
+  activePdfFile.value = filename
+  pdfDialogVisible.value = true
+}
+
+// --- DB/Word 数据模块相关 ---
 const searchBrand = ref('')
 const tableData = ref([])
 const activeBrand = ref('')
@@ -78,7 +144,6 @@ const selectedStandard = ref(null)
 const fetchStandards = async () => {
   const { data } = await searchStandards({ brand_name: searchBrand.value })
   tableData.value = data.items || []
-  // 默认取消选中，保持干净
   activeBrand.value = ''
   selectedStandard.value = null
 }
@@ -93,13 +158,11 @@ const handleRowSelect = async (currentRow) => {
   }
 }
 
-// 高灵活性扁平化映射计算
 const elementGridData = computed(() => {
   if (!selectedStandard.value) return []
   const tech = selectedStandard.value.tech_req || {}
   const ctrl = selectedStandard.value.ctrl_req || {}
   
-  // 兼顾所有在技术或内控中露过脸的合金成分，实现完美容错
   const allElements = Array.from(new Set([...Object.keys(tech), ...Object.keys(ctrl)]))
   
   return allElements.map(el => ({
@@ -110,6 +173,7 @@ const elementGridData = computed(() => {
 })
 
 onMounted(() => {
+  fetchPdfList()
   fetchStandards()
 })
 </script>
@@ -118,7 +182,7 @@ onMounted(() => {
 .block-card {
   border-radius: 12px;
   transition: all 0.3s;
-  min-height: 480px;
+  min-height: 200px;
 }
 .block-card:hover {
   transform: translateY(-1px);

@@ -56,5 +56,6 @@ export const getStandardDetail = (params) => http.get('/api/search/standards/det
 // 新增：获取 PDF 页数以便生成压缩图像占位
 export const getStandardPdfInfo = (params) => http.get(`/api/search/standards/file/${encodeURIComponent(params.brand_name)}/info`)
 export const syncAllStandards = () => http.post('/api/import/sync-standards')
+export const getStandardPdfs = () => http.get('/api/search/standards/pdfs')
 
 export default http
