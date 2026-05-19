@@ -56,12 +56,7 @@ def upsert_sheet_meta(conn, sheet_name, table_name, columns, key_columns, header
     })
 
 def create_business_table_if_not_exists(conn, table_name: str, columns: list):
-    col_defs = []
-    for col in columns:
-        # 防御性转义：将列名中的双引号替换为两个双引号，避免 SQL 注入式截断
-        safe_col = col.replace('"', '""')
-        col_defs.append(f'"{safe_col}" TEXT')
-        
+    col_defs = [f'"{col}" TEXT' for col in columns]
     cols_sql = ",\n".join(col_defs)
     sql = f'''
         CREATE TABLE IF NOT EXISTS "{table_name}" (
@@ -80,8 +75,7 @@ def add_missing_columns(conn, table_name: str, columns: list):
 
     for col in columns:
         if col not in existing_columns:
-            safe_col = col.replace('"', '""')
-            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{safe_col}" TEXT'))
+            conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" TEXT'))
 
 def create_search_indexes(conn, table_name: str, columns: list):
     if "炉号" in columns:
@@ -120,13 +114,10 @@ def delete_row_fingerprint(conn, sheet_name, global_row_key):
 
 def upsert_business_row(conn, table_name, row_data: dict):
     cols = list(row_data.keys())
-    # 防御性转义所有的列名键
-    safe_col_names = [f'"{c.replace("`", "").replace(chr(34), chr(34)+chr(34))}"' for c in cols]
-    
-    col_names_str = ", ".join(safe_col_names)
+    col_names_str = ", ".join([f'"{c}"' for c in cols])
     placeholders = ", ".join([f":{i}" for i in range(len(cols))])
     
-    updates = ", ".join([f'{safe_col_names[i]}=EXCLUDED.{safe_col_names[i]}' for i in range(len(cols)) if cols[i] != "__row_key"])
+    updates = ", ".join([f'"{cols[i]}"=EXCLUDED."{cols[i]}"' for i in range(len(cols)) if cols[i] != "__row_key"])
     
     sql = f'''
         INSERT INTO "{table_name}" ({col_names_str})
