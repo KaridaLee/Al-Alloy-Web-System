@@ -25,15 +25,14 @@
 
         <el-form-item>
           <el-button type="primary" @click="handleSave" :loading="saving">保存设置</el-button>
-          <el-button type="success" @click="handleSyncAll" :loading="syncing">立即同步目录全部Excel</el-button>
-          <el-button type="warning" @click="handleSyncStandards" :loading="syncingStandards">提取目录全部企业标准 (Word)</el-button>
+          <el-button type="success" @click="handleSyncAll" :loading="syncing">立即同步目录全部Excel台账</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <el-card class="block-card">
       <template #header>
-        <div style="font-weight:700;">台账数据 / 规程Word 直传</div>
+        <div style="font-weight:700;">台账数据 / 企标原件 直传</div>
       </template>
       
       <div style="max-width: 600px; margin: 10px 0;">
@@ -41,19 +40,19 @@
           drag
           action=""
           :http-request="handleCustomUpload"
-          accept=".xlsx,.doc,.docx"
+          accept=".xlsx,.pdf"
           :show-file-list="true"
           multiple
         >
           <el-icon class="el-icon--upload"><upload-filled /></el-icon>
           <div class="el-upload__text">
-            将 <em>.xlsx (台账文件)</em> 或 <em>.doc/.docx (企标Word)</em> 拖到此处，或 <em>点击上传</em>
+            将 <em>.xlsx (生产台账)</em> 或 <em>.pdf (企标原件)</em> 拖到此处，或 <em>点击上传</em>
           </div>
           <template #tip>
             <div class="el-upload__tip" style="color: #94a3b8; margin-top: 8px;">
               提示：系统会自动识别文件分流路径：<br/>
-              - <strong>.xlsx 生产台账</strong> 将直接进入源数据池等待扫描增量指纹。<br/>
-              - <strong>.doc / .docx 企业规程</strong> 将保存在 data/word 目录下。上传后请及时点击上方的【提取目录全部企业标准 (Word)】按钮完成静态指标爬取。
+              - <strong>.xlsx 生产台账</strong> 将直接进入源数据池。上传后请点击上方的【立即同步】以抓取最新数据和牌号。<br/>
+              - <strong>.pdf 企业标准</strong> 将保存在 data/standards 目录下。上传后可直接在“企业标准”页面进行预览。
             </div>
           </template>
         </el-upload>
@@ -65,7 +64,7 @@
       title="说明"
       type="info"
       :closable="false"
-      description="当前同步模式支持手动同步和Cron定时同步。变更规格和标准后，点击一键批处理提取将自动清洗出高精度的元素指标数据库。"
+      description="当前同步模式支持手动同步和Cron定时同步。在添加了新的 Excel 生产台账后，系统会自动抓取其中出现过的新牌号，并展示在“企业标准”面板中供您进行指标区间配置。"
     />
   </div>
 </template>
@@ -74,11 +73,10 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
-import { getSettings, saveSettings, syncAllExcels, uploadExcel, syncAllStandards } from '../api'
+import { getSettings, saveSettings, syncAllExcels, uploadExcel } from '../api'
 
 const saving = ref(false)
 const syncing = ref(false)
-const syncingStandards = ref(false)
 
 const settings = reactive({
   sourceDir: 'data/source',
@@ -105,10 +103,10 @@ const handleSave = async () => {
       syncMode: settings.syncMode,
       cron: settings.cron
     })
-    ElMessage.success('同步配置已成功落地')
+    ElMessage.success('同步配置已成功保存')
   } catch (e) {
     console.error(e)
-    ElMessage.error('落地失败')
+    ElMessage.error('配置保存失败')
   } finally {
     saving.value = false
   }
@@ -121,34 +119,13 @@ const handleSyncAll = async () => {
     if (data.success) {
       ElMessage.success(`台账增量同步完成！新增: ${data.added_count} 条，修改: ${data.updated_count} 条`)
     } else {
-      ElMessage.warning(data.message || '无台账变更')
+      ElMessage.warning(data.message || '未发现需要同步的台账更新')
     }
   } catch (e) {
     console.error(e)
-    ElMessage.error('同步异常')
+    ElMessage.error('台账同步异常，请检查控制台日志')
   } finally {
     syncing.value = false
-  }
-}
-
-const handleSyncStandards = async () => {
-  syncingStandards.value = true
-  try {
-    const { data } = await syncAllStandards()
-    if (data.success) {
-      if (data.failed_list && data.failed_list.length > 0) {
-        ElMessage.warning(`提取完成！成功处理: ${data.success_count} 个，失败: ${data.failed_list.length} 个。`)
-      } else {
-        ElMessage.success(`Word范围爬取大获成功！共计录入并更新了 ${data.success_count} 组牌号核心控流网格。`)
-      }
-    } else {
-      ElMessage.warning(data.message)
-    }
-  } catch (e) {
-    console.error(e)
-    ElMessage.error('后端爬虫解析异常')
-  } finally {
-    syncingStandards.value = false
   }
 }
 
@@ -165,7 +142,7 @@ const handleCustomUpload = async (options) => {
       options.onError(new Error(data.message))
     }
   } catch (err) {
-    ElMessage.error('直传中转崩溃')
+    ElMessage.error('文件直传服务崩溃，请检查后端状态')
     options.onError(err)
   }
 }
@@ -174,3 +151,20 @@ onMounted(() => {
   loadSettings()
 })
 </script>
+
+<style scoped>
+.block-card {
+  border-radius: 12px;
+  transition: all 0.3s;
+}
+.block-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.05);
+}
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: #1e293b;
+}
+</style>

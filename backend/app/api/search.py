@@ -245,7 +245,7 @@ def export_excel(req: ExportRequest):
 
 
 # ==========================================
-# 企标控制范围管理与 PDF 预览专属路由
+# 企标控制范围管理、保存与 PDF 预览专属路由
 # ==========================================
 
 @router.get("/standards/pdfs")
@@ -275,48 +275,105 @@ def get_standard_pdf_file(filename: str):
 
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
-    """模糊查询受控企标列表 (从 Word 提取进 DB 的数据)"""
+    """
+    智能获取牌号列表：
+    从实际的 sys_sheet_meta (生产台账数据) 和 enterprise_standard 中汇集所有已知牌号。
+    保证哪怕没有手动添加过的牌号，只要在台账里出现过，也能点出来进行填报。
+    """
+    brands = set()
+    
+    # 1. 扫描所有的台账表获取真实牌号
+    with engine.begin() as conn:
+        metas = conn.execute(text("SELECT table_name, columns_json FROM sys_sheet_meta")).mappings().all()
+        for m in metas:
+            cols = json.loads(m["columns_json"])
+            if "牌号" in cols:
+                table_name = m["table_name"]
+                rows = conn.execute(text(f'SELECT DISTINCT "牌号" FROM "{table_name}" WHERE "牌号" IS NOT NULL AND TRIM("牌号") != \'\'')).fetchall()
+                for r in rows:
+                    if r[0]: brands.add(str(r[0]).strip())
+                    
+    # 2. 合并已有标准的牌号
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
-    if not db_path.exists():
-        return {"items": []}
-
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.row_factory = sqlite3.Row
-        if brand_name.strip():
-            cursor = conn.execute(
-                'SELECT brand_name, updated_at FROM enterprise_standard WHERE brand_name LIKE ? ORDER BY brand_name ASC',
-                (f"%{brand_name.strip()}%",)
-            )
-        else:
-            cursor = conn.execute('SELECT brand_name, updated_at FROM enterprise_standard ORDER BY brand_name ASC')
-        rows = cursor.fetchall()
-        return {"items": [dict(r) for r in rows]}
+    if db_path.exists():
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.execute('SELECT brand_name FROM enterprise_standard')
+            for r in cursor.fetchall():
+                if r[0]: brands.add(str(r[0]).strip())
+                
+    # 3. 过滤与排序
+    query = brand_name.strip().lower()
+    if query:
+        brands = {b for b in brands if query in b.lower()}
+        
+    return {"items": [{"brand_name": b} for b in sorted(list(brands))]}
 
 
 @router.get("/standards/detail")
 def get_standard_detail(brand_name: str = Query(...)):
-    """提取单个牌号的技术与内控范围 JSON"""
+    """提取单个牌号已保存的标准数据"""
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if not db_path.exists():
-        return {"success": False, "message": "标准规程库文件不存在"}
+        return {"success": True, "standard": {"tech_req": {}}}
 
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            'SELECT brand_name, tech_req_json, ctrl_req_json, updated_at FROM enterprise_standard WHERE brand_name = ?',
-            (brand_name,)
-        ).fetchone()
+        row = conn.execute('SELECT tech_req_json FROM enterprise_standard WHERE brand_name = ?', (brand_name,)).fetchone()
 
         if not row:
-            return {"success": False, "message": "未检索到对应的规格成分指标要求"}
+            return {"success": True, "standard": {"tech_req": {}}}
 
         res = dict(row)
         try:
+            # 兼容新版的结构化存储，我们将完整的 {min/max} 结构存放在了 tech_req_json 中
             res["tech_req"] = json.loads(res["tech_req_json"]) if res.get("tech_req_json") else {}
-            res["ctrl_req"] = json.loads(res["ctrl_req_json"]) if res.get("ctrl_req_json") else {}
         except Exception:
-            pass
+            res["tech_req"] = {}
 
         return {"success": True, "standard": res}
+
+
+class SaveElementItem(BaseModel):
+    tech_min: str = ""
+    ctrl_min: str = ""
+    ctrl_max: str = ""
+    tech_max: str = ""
+
+class SaveStandardReq(BaseModel):
+    brand_name: str
+    elements: dict[str, SaveElementItem]
+
+@router.post("/standards/save")
+def save_standard_detail(req: SaveStandardReq):
+    """保存前端五宫格填报的结构化数据"""
+    from app.core.config import DATA_DIR
+    from datetime import datetime
+    
+    db_path = DATA_DIR / "sqlite" / "standards.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS enterprise_standard (
+                brand_name TEXT PRIMARY KEY,
+                tech_req_json TEXT,
+                ctrl_req_json TEXT,
+                updated_at TEXT
+            )
+        """)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 将传入的结构化数据直接 JSON 序列化并存入 tech_req_json 字段
+        tech_json = json.dumps({k: v.dict() for k, v in req.elements.items()}, ensure_ascii=False)
+        
+        conn.execute("""
+            INSERT INTO enterprise_standard (brand_name, tech_req_json, ctrl_req_json, updated_at)
+            VALUES (?, ?, '', ?)
+            ON CONFLICT(brand_name) DO UPDATE SET
+                tech_req_json = excluded.tech_req_json,
+                updated_at = excluded.updated_at
+        """, (req.brand_name, tech_json, now))
+        
+    return {"success": True, "message": "保存成功"}

@@ -57,5 +57,6 @@ export const getStandardDetail = (params) => http.get('/api/search/standards/det
 export const getStandardPdfInfo = (params) => http.get(`/api/search/standards/file/${encodeURIComponent(params.brand_name)}/info`)
 export const syncAllStandards = () => http.post('/api/import/sync-standards')
 export const getStandardPdfs = () => http.get('/api/search/standards/pdfs')
+export const saveStandardDetail = (data) => http.post('/api/search/standards/save', data)
 
 export default http
