@@ -19,10 +19,45 @@ from app.services.sqlite_service import (
     insert_sync_log,
 )
 
+# ==========================================
+# 新增：表头清洗核心函数
+# ==========================================
+def clean_column_name(col: str) -> str:
+    """彻底清除列名中的换行符、回车符和空格"""
+    if not col:
+        return ""
+    return str(col).replace('\n', '').replace('\r', '').replace(' ', '').strip()
+
 
 def sync_single_excel_to_sqlite(file_path: str):
     print(f"[SYNC] 开始同步单文件: {file_path}")
     parsed_sheets = parse_workbook(file_path)
+    
+    # ==========================================
+    # 新增：中间层拦截清洗逻辑
+    # 作用：在数据入库前，修复所有由于 Alt+Enter 造成的非结构化换列表头
+    # ==========================================
+    for sheet in parsed_sheets:
+        old_columns = sheet.get("columns", [])
+        
+        # 1. 建立旧表头到新（干净）表头的映射字典
+        col_map = {col: clean_column_name(col) for col in old_columns}
+        
+        # 2. 清洗工作表的列定义
+        sheet["columns"] = [col_map[col] for col in old_columns]
+        
+        # 3. 清洗主键定义（如果有）
+        if sheet.get("key_columns"):
+            sheet["key_columns"] = [col_map.get(k, k) for k in sheet["key_columns"]]
+            
+        # 4. 深度清洗每一行数据里的键名 (字典的 Key)
+        for row_item in sheet.get("rows", []):
+            old_data = row_item.get("data", {})
+            # 根据映射表替换所有的键名，值保持不变
+            new_data = {col_map.get(k, k): v for k, v in old_data.items()}
+            row_item["data"] = new_data
+    # ==========================================
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     source_file = Path(file_path).name
 

@@ -21,12 +21,13 @@ ELEMENTS_SET = set(ELEMENTS_ORDER)
 
 def extract_element_from_col(col_name: str):
     """
-    核心智能表头映射算法：
-    利用正则匹配以大写字母开头、小写字母结尾（可选）的元素符号，
-    自动过滤掉后面的括号、汉字、百分号等备注干扰项。
-    例如："Si(9.6-12)" -> "Si", "Cu%" -> "Cu"
+    终极智能表头映射算法：
+    自动过滤掉单元格内的换行符(\n)、回车符(\r)、空格以及括号备注。
     """
-    match = re.match(r'^([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', col_name.strip())
+    if not col_name: return None
+    # 核心修复点：彻底清除不可见的换行符和空格
+    clean_name = str(col_name).replace('\n', '').replace('\r', '').replace(' ', '').strip()
+    match = re.match(r'^([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', clean_name)
     if match:
         el = match.group(1)
         if el in ELEMENTS_SET:
@@ -41,8 +42,7 @@ class ExportRequest(BaseModel):
     items: List[ExportItem]
 
 def normalize_detail_item(item: dict):
-    if not item:
-        return item
+    if not item: return item
 
     base_fields_order = [
         "序号", "炉号", "牌号", "批次号", "班组_班长",
@@ -60,19 +60,15 @@ def normalize_detail_item(item: dict):
             base_info[key] = item.get(key)
 
     for key, value in item.items():
-        if key in base_info:
-            continue
+        if key in base_info: continue
 
-        # 启用智能映射识别元素
         el = extract_element_from_col(key)
         if el:
             chemistry[el] = value
             continue
 
-        if key.startswith("化学成分"):
-            continue
-        if key.startswith("__"):
-            continue
+        if key.startswith("化学成分"): continue
+        if key.startswith("__"): continue
 
         others[key] = value
 
@@ -101,11 +97,7 @@ def search_records(
     offset = (page - 1) * page_size
 
     with engine.begin() as conn:
-        metas = conn.execute(text("""
-            SELECT sheet_name, table_name, columns_json
-            FROM sys_sheet_meta
-        """)).mappings().all()
-
+        metas = conn.execute(text("SELECT sheet_name, table_name, columns_json FROM sys_sheet_meta")).mappings().all()
         if sheet:
             metas = [m for m in metas if m["sheet_name"] == sheet]
 
@@ -113,7 +105,6 @@ def search_records(
 
         for m in metas:
             table_name = m["table_name"]
-
             pragma_cols = conn.execute(text(f'PRAGMA table_info("{table_name}")')).mappings().all()
             cols = [c["name"] for c in pragma_cols]
 
@@ -129,10 +120,8 @@ def search_records(
                 params["grade_no"] = f"%{grade_no.strip()}%"
 
             time_col = None
-            if "检测时间时间" in cols:
-                time_col = "检测时间时间"
-            elif "检测时间" in cols:
-                time_col = "检测时间"
+            if "检测时间时间" in cols: time_col = "检测时间时间"
+            elif "检测时间" in cols: time_col = "检测时间"
 
             if start_time.strip() and time_col:
                 where_clauses.append(f'"{time_col}" >= :start_time')
@@ -142,8 +131,7 @@ def search_records(
                 where_clauses.append(f'"{time_col}" <= :end_time')
                 params["end_time"] = end_time.strip()
 
-            if not where_clauses:
-                continue
+            if not where_clauses: continue
 
             where_sql = " AND ".join(where_clauses)
             sql = f'''
@@ -173,23 +161,10 @@ def search_records(
 @router.get("/detail")
 def record_detail(sheet: str, row_key: str):
     with engine.begin() as conn:
-        meta = conn.execute(text("""
-            SELECT table_name FROM sys_sheet_meta WHERE sheet_name=:sheet
-        """), {"sheet": sheet}).mappings().first()
-
-        if not meta:
-            return {"success": False, "message": "sheet不存在"}
-
-        row = conn.execute(text(f'''
-            SELECT * FROM "{meta["table_name"]}" WHERE "__row_key"=:row_key
-        '''), {"row_key": row_key}).mappings().first()
-
-        normalized = normalize_detail_item(dict(row)) if row else None
-
-        return {
-            "success": True,
-            "item": normalized
-        }
+        meta = conn.execute(text("SELECT table_name FROM sys_sheet_meta WHERE sheet_name=:sheet"), {"sheet": sheet}).mappings().first()
+        if not meta: return {"success": False, "message": "sheet不存在"}
+        row = conn.execute(text(f'SELECT * FROM "{meta["table_name"]}" WHERE "__row_key"=:row_key'), {"row_key": row_key}).mappings().first()
+        return {"success": True, "item": normalize_detail_item(dict(row)) if row else None}
 
 
 @router.post("/export")
@@ -197,35 +172,22 @@ def export_excel(req: ExportRequest):
     wb = openpyxl.Workbook()
     ws = wb.worksheets[0]
     ws.title = "Sheet1"
-
     headers = ["炉号", "牌号", "批次号", "检测时间时间"] + ELEMENTS_ORDER + ["SF"]
     ws.append(headers)
 
     with engine.begin() as conn:
         for item in req.items:
-            meta = conn.execute(
-                text("SELECT table_name FROM sys_sheet_meta WHERE sheet_name=:sheet"),
-                {"sheet": item.sheet_name}
-            ).mappings().first()
+            meta = conn.execute(text("SELECT table_name FROM sys_sheet_meta WHERE sheet_name=:sheet"), {"sheet": item.sheet_name}).mappings().first()
+            if not meta: continue
 
-            if not meta:
-                continue
-
-            table_name = meta["table_name"]
-            row_data = conn.execute(
-                text(f'SELECT * FROM "{table_name}" WHERE "__row_key"=:rk'),
-                {"rk": item.row_key}
-            ).mappings().first()
-
+            row_data = conn.execute(text(f'SELECT * FROM "{meta["table_name"]}" WHERE "__row_key"=:rk'), {"rk": item.row_key}).mappings().first()
             if row_data:
                 row_dict = dict(row_data)
                 
-                # 动态生成本行的表头反向映射
                 el_col_map = {}
                 for k in row_dict.keys():
                     el = extract_element_from_col(k)
-                    if el:
-                        el_col_map[el] = k
+                    if el: el_col_map[el] = k
 
                 row_list = []
                 row_list.append(row_dict.get("炉号") or "")
@@ -236,53 +198,26 @@ def export_excel(req: ExportRequest):
                 for el in ELEMENTS_ORDER:
                     actual_col = el_col_map.get(el)
                     val = row_dict.get(actual_col) if actual_col else None
-                    
-                    if val is None or val == "":
-                        row_list.append(0.0)
+                    if val is None or val == "": row_list.append(0.0)
                     else:
-                        try:
-                            row_list.append(float(val))
-                        except (ValueError, TypeError):
-                            row_list.append(val)
+                        try: row_list.append(float(val))
+                        except: row_list.append(val)
 
                 sf_val = row_dict.get("SF")
-                if sf_val is None or sf_val == "":
-                    row_list.append(0.0)
-                else:
-                    try:
-                        row_list.append(float(sf_val))
-                    except (ValueError, TypeError):
-                        row_list.append(sf_val)
-
+                row_list.append(float(sf_val) if sf_val else 0.0)
                 ws.append(row_list)
 
     output = BytesIO()
     wb.save(output)
     output.seek(0)
+    return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=elements_export.xlsx"})
 
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=elements_export.xlsx"}
-    )
-
-
-# ==========================================
-# 企标控制范围管理、保存与 PDF 预览专属路由
-# ==========================================
 
 @router.get("/standards/pdfs")
 def list_standard_pdfs():
     from app.core.config import BASE_DIR
     pdf_dir = BASE_DIR / "data" / "standards"
-    if not pdf_dir.exists():
-        return {"items": []}
-    
-    pdfs = []
-    for p in pdf_dir.glob("*.pdf"):
-        pdfs.append({"filename": p.name})
-    return {"items": pdfs}
-
+    return {"items": [{"filename": p.name} for p in pdf_dir.glob("*.pdf")] if pdf_dir.exists() else []}
 
 @router.get("/standards/pdfs/{filename}")
 def get_standard_pdf_file(filename: str):
@@ -292,7 +227,6 @@ def get_standard_pdf_file(filename: str):
         return FileResponse(str(file_path), media_type="application/pdf")
     return {"success": False, "message": "PDF文件不存在"}
 
-
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
     brands = set()
@@ -301,8 +235,7 @@ def search_standards(brand_name: str = Query("")):
         for m in metas:
             cols = json.loads(m["columns_json"])
             if "牌号" in cols:
-                table_name = m["table_name"]
-                rows = conn.execute(text(f'SELECT DISTINCT "牌号" FROM "{table_name}" WHERE "牌号" IS NOT NULL AND TRIM("牌号") != \'\'')).fetchall()
+                rows = conn.execute(text(f'SELECT DISTINCT "牌号" FROM "{m["table_name"]}" WHERE "牌号" IS NOT NULL AND TRIM("牌号") != \'\'')).fetchall()
                 for r in rows:
                     if r[0]: brands.add(str(r[0]).strip())
                     
@@ -310,38 +243,27 @@ def search_standards(brand_name: str = Query("")):
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if db_path.exists():
         with sqlite3.connect(str(db_path)) as conn:
-            cursor = conn.execute('SELECT brand_name FROM enterprise_standard')
-            for r in cursor.fetchall():
+            for r in conn.execute('SELECT brand_name FROM enterprise_standard').fetchall():
                 if r[0]: brands.add(str(r[0]).strip())
                 
     query = brand_name.strip().lower()
-    if query:
-        brands = {b for b in brands if query in b.lower()}
-        
+    if query: brands = {b for b in brands if query in b.lower()}
     return {"items": [{"brand_name": b} for b in sorted(list(brands))]}
-
 
 @router.get("/standards/detail")
 def get_standard_detail(brand_name: str = Query(...)):
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
-    if not db_path.exists():
-        return {"success": True, "standard": {"tech_req": {}}}
+    if not db_path.exists(): return {"success": True, "standard": {"tech_req": {}}}
 
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute('SELECT tech_req_json FROM enterprise_standard WHERE brand_name = ?', (brand_name,)).fetchone()
-        if not row:
-            return {"success": True, "standard": {"tech_req": {}}}
-
+        if not row: return {"success": True, "standard": {"tech_req": {}}}
         res = dict(row)
-        try:
-            res["tech_req"] = json.loads(res["tech_req_json"]) if res.get("tech_req_json") else {}
-        except Exception:
-            res["tech_req"] = {}
-
+        try: res["tech_req"] = json.loads(res["tech_req_json"]) if res.get("tech_req_json") else {}
+        except: res["tech_req"] = {}
         return {"success": True, "standard": res}
-
 
 class SaveElementItem(BaseModel):
     tech_min: str = ""
@@ -359,25 +281,13 @@ def save_standard_detail(req: SaveStandardReq):
     from datetime import datetime
     db_path = DATA_DIR / "sqlite" / "standards.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    
     with sqlite3.connect(str(db_path)) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS enterprise_standard (
-                brand_name TEXT PRIMARY KEY,
-                tech_req_json TEXT,
-                ctrl_req_json TEXT,
-                updated_at TEXT
-            )
-        """)
+        conn.execute("CREATE TABLE IF NOT EXISTS enterprise_standard (brand_name TEXT PRIMARY KEY, tech_req_json TEXT, ctrl_req_json TEXT, updated_at TEXT)")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         tech_json = json.dumps({k: v.dict() for k, v in req.elements.items()}, ensure_ascii=False)
-        
         conn.execute("""
             INSERT INTO enterprise_standard (brand_name, tech_req_json, ctrl_req_json, updated_at)
             VALUES (?, ?, '', ?)
-            ON CONFLICT(brand_name) DO UPDATE SET
-                tech_req_json = excluded.tech_req_json,
-                updated_at = excluded.updated_at
+            ON CONFLICT(brand_name) DO UPDATE SET tech_req_json = excluded.tech_req_json, updated_at = excluded.updated_at
         """, (req.brand_name, tech_json, now))
-        
     return {"success": True, "message": "保存成功"}
