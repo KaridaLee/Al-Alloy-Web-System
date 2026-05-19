@@ -3,7 +3,7 @@ from sqlalchemy import text
 from app.core.database import engine
 from io import BytesIO
 from typing import List
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import openpyxl
 import sqlite3
@@ -245,11 +245,12 @@ def export_excel(req: ExportRequest):
 
 
 # ==========================================
-# 企业标准管理模块专属接口（算法优化清晰度版）
+# 企标控制范围管理专属路由（已彻底精简）
 # ==========================================
 
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
+    """模糊查询受控企标列表"""
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if not db_path.exists():
@@ -270,21 +271,21 @@ def search_standards(brand_name: str = Query("")):
 
 @router.get("/standards/detail")
 def get_standard_detail(brand_name: str = Query(...)):
+    """提取单个牌号的技术与内控范围 JSON"""
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if not db_path.exists():
-        return {"success": False, "message": "标准数据库未初始化"}
+        return {"success": False, "message": "标准规程库文件不存在"}
 
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        # 仅查询成分数据
         row = conn.execute(
             'SELECT brand_name, tech_req_json, ctrl_req_json, updated_at FROM enterprise_standard WHERE brand_name = ?',
             (brand_name,)
         ).fetchone()
 
         if not row:
-            return {"success": False, "message": "未找到该牌号的企业标准数据"}
+            return {"success": False, "message": "未检索到对应的规格成分指标要求"}
 
         res = dict(row)
         try:
@@ -294,50 +295,3 @@ def get_standard_detail(brand_name: str = Query(...)):
             pass
 
         return {"success": True, "standard": res}
-
-
-@router.get("/standards/file/{brand_name}/info")
-def get_standard_pdf_info(brand_name: str):
-    from app.core.config import BASE_DIR
-    pdf_dir = BASE_DIR / "data" / "standards"
-    if not pdf_dir.exists():
-        return {"success": False, "message": "标准物理目录未建立"}
-
-    for p in pdf_dir.glob("*.pdf"):
-        if brand_name.lower() in p.name.lower():
-            import pdfplumber
-            try:
-                with pdfplumber.open(p) as pdf:
-                    return {"success": True, "totalPages": len(pdf.pages)}
-            except Exception as e:
-                return {"success": False, "message": f"解析原件失败: {str(e)}"}
-
-    return {"success": False, "message": f"未找到 {brand_name} 的 PDF"}
-
-
-@router.get("/standards/file/{brand_name}/page/{page_index}")
-def get_standard_pdf_page(brand_name: str, page_index: int):
-    """
-    【算法调优版】提取 PDF 指定页并转换为清晰无失真的压缩图像流
-    """
-    from app.core.config import BASE_DIR
-    pdf_dir = BASE_DIR / "data" / "standards"
-    for p in pdf_dir.glob("*.pdf"):
-        if brand_name.lower() in p.name.lower():
-            import pdfplumber
-            from io import BytesIO
-            try:
-                with pdfplumber.open(p) as pdf:
-                    if 0 <= page_index < len(pdf.pages):
-                        page = pdf.pages[page_index]
-                        # 核心修改点：解析度由 100 提升至 150 DPI，确保小字、表格线依然清晰锐利
-                        img = page.to_image(resolution=150).original
-                        buf = BytesIO()
-                        # 核心修改点：压缩质量由 75% 提升至 90%，开启高级有损优化，解决图像发虚、失真问题
-                        img.convert("RGB").save(buf, format="JPEG", quality=90, optimize=True)
-                        buf.seek(0)
-                        return StreamingResponse(buf, media_type="image/jpeg")
-            except Exception as e:
-                print(f"[PDF Image Render Error] {e}")
-                
-    return {"success": False}

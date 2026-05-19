@@ -40,22 +40,30 @@ def save_settings(payload: SettingsPayload):
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     filename = file.filename
-    if not filename: return {"success": False, "message": "无法获取文件名，上传失败"}
+    if not filename: 
+        return {"success": False, "message": "无法获取文件名，上传失败"}
 
-    if filename.endswith('.xlsx'):
+    fn_lower = filename.lower()
+    
+    # 1. 如果是标准的 Word 格式说明文档
+    if fn_lower.endswith('.docx') or fn_lower.endswith('.doc'):
+        dest_dir = BASE_DIR / "data" / "word"
+        msg_suffix = "已存入企业标准 Word 库（请去设置页面点击提取范围）"
+        
+    # 2. 如果是生产台账 Excel
+    elif fn_lower.endswith('.xlsx'):
         settings = load_settings()
         source_dir_str = settings.get("sourceDir", "data/source")
         source_path = Path(source_dir_str)
         dest_dir = BASE_DIR / source_path if not source_path.is_absolute() else source_path
         msg_suffix = "已存入台账待同步目录"
-    elif filename.lower().endswith('.pdf'):
-        dest_dir = BASE_DIR / "data" / "standards"
-        msg_suffix = "已存入企业标准库（请点击上方按钮提取数据）"
+        
     else:
-        return {"success": False, "message": "仅支持上传 .xlsx 或 .pdf 格式的文件"}
+        return {"success": False, "message": "当前接口仅允许上传 .xlsx 台账或 .doc/.docx 企标规范"}
     
     dest_dir.mkdir(parents=True, exist_ok=True)
     file_path = dest_dir / filename
+    
     with file_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         

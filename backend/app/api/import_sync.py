@@ -19,7 +19,7 @@ def sync_excel(req: SyncRequest):
         return sync_excel_to_sqlite(req.file_path)
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"同步失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"台账同步失败：{str(e)}")
 
 @router.post("/sync-all")
 def sync_all_excels():
@@ -27,12 +27,13 @@ def sync_all_excels():
         return sync_all_excels_in_source_dir()
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"同步失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"全量同步失败：{str(e)}")
 
 @router.post("/sync-standards")
 def sync_standards():
+    """手动激活：统一爬取 data/word 目录下的企标表格"""
     try:
         return sync_all_standards_in_dir()
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"企业标准提取失败：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"企标表格提取失败：{str(e)}")
