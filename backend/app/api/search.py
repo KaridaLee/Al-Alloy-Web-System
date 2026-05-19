@@ -21,13 +21,12 @@ ELEMENTS_SET = set(ELEMENTS_ORDER)
 
 def extract_element_from_col(col_name: str):
     """
-    终极智能表头映射算法：
-    自动过滤掉单元格内的换行符(\n)、回车符(\r)、空格以及括号备注。
+    终极智能表头穿透映射算法：
+    允许前面有汉字干扰，无视括号，严格捕获唯一的元素符号。
     """
     if not col_name: return None
-    # 核心修复点：彻底清除不可见的换行符和空格
-    clean_name = str(col_name).replace('\n', '').replace('\r', '').replace(' ', '').strip()
-    match = re.match(r'^([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', clean_name)
+    clean_name = str(col_name).strip()
+    match = re.match(r'^[^a-zA-Z]*([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', clean_name)
     if match:
         el = match.group(1)
         if el in ELEMENTS_SET:
@@ -64,7 +63,11 @@ def normalize_detail_item(item: dict):
 
         el = extract_element_from_col(key)
         if el:
-            chemistry[el] = value
+            # 防止数据库历史脏数据导致空值覆盖了真实数据
+            if value is not None and str(value).strip() != "":
+                chemistry[el] = value
+            elif el not in chemistry:
+                chemistry[el] = value
             continue
 
         if key.startswith("化学成分"): continue
@@ -102,7 +105,6 @@ def search_records(
             metas = [m for m in metas if m["sheet_name"] == sheet]
 
         all_results = []
-
         for m in metas:
             table_name = m["table_name"]
             pragma_cols = conn.execute(text(f'PRAGMA table_info("{table_name}")')).mappings().all()
@@ -114,7 +116,6 @@ def search_records(
             if furnace_no.strip() and "炉号" in cols:
                 where_clauses.append('"炉号" LIKE :furnace_no')
                 params["furnace_no"] = f"%{furnace_no.strip()}%"
-
             if grade_no.strip() and "牌号" in cols:
                 where_clauses.append('"牌号" LIKE :grade_no')
                 params["grade_no"] = f"%{grade_no.strip()}%"
@@ -126,7 +127,6 @@ def search_records(
             if start_time.strip() and time_col:
                 where_clauses.append(f'"{time_col}" >= :start_time')
                 params["start_time"] = start_time.strip()
-
             if end_time.strip() and time_col:
                 where_clauses.append(f'"{time_col}" <= :end_time')
                 params["end_time"] = end_time.strip()
@@ -141,7 +141,6 @@ def search_records(
             ORDER BY "{time_col or '__row_key'}" DESC
             '''
             rows = conn.execute(text(sql), params).mappings().all()
-
             for r in rows:
                 row = dict(r)
                 row["_sheet_name"] = m["sheet_name"]
@@ -156,7 +155,6 @@ def search_records(
             "pageSize": page_size,
             "items": paged
         }
-
 
 @router.get("/detail")
 def record_detail(sheet: str, row_key: str):
@@ -183,11 +181,14 @@ def export_excel(req: ExportRequest):
             row_data = conn.execute(text(f'SELECT * FROM "{meta["table_name"]}" WHERE "__row_key"=:rk'), {"rk": item.row_key}).mappings().first()
             if row_data:
                 row_dict = dict(row_data)
-                
                 el_col_map = {}
-                for k in row_dict.keys():
+                for k, v in row_dict.items():
                     el = extract_element_from_col(k)
-                    if el: el_col_map[el] = k
+                    if el:
+                        if v is not None and str(v).strip() != "":
+                            el_col_map[el] = k
+                        elif el not in el_col_map:
+                            el_col_map[el] = k
 
                 row_list = []
                 row_list.append(row_dict.get("炉号") or "")

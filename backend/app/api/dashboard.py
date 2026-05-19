@@ -9,9 +9,8 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 def extract_element_from_col(col_name: str):
     if not col_name: return None
-    # 核心修复点：彻底清除不可见的换行符和空格
-    clean_name = str(col_name).replace('\n', '').replace('\r', '').replace(' ', '').strip()
-    match = re.match(r'^([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', clean_name)
+    clean_name = str(col_name).strip()
+    match = re.match(r'^[^a-zA-Z]*([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', clean_name)
     if match:
         el = match.group(1)
         if el in ELEMENTS_SET:
@@ -126,11 +125,14 @@ def get_brand_trends(brand: str = Query(..., description="牌号名称")):
         for r in recent_10:
             row_dict = dict(r)
             actual_col = None
-            for k in row_dict.keys():
+            for k, v in row_dict.items():
                 if extract_element_from_col(k) == el:
-                    actual_col = k
-                    break
-                    
+                    if v is not None and str(v).strip() != "":
+                        actual_col = k
+                        break
+                    elif actual_col is None:
+                        actual_col = k
+                        
             v = row_dict.get(actual_col) if actual_col else None
             if v is not None and v != "":
                 try:

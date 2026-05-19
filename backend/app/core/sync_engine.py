@@ -19,14 +19,12 @@ from app.services.sqlite_service import (
     insert_sync_log,
 )
 
-# ==========================================
-# 新增：表头清洗核心函数
-# ==========================================
+
 def clean_column_name(col: str) -> str:
-    """彻底清除列名中的换行符、回车符和空格"""
+    """彻底清除列名中的换行、回车和两端空格，防断层"""
     if not col:
-        return ""
-    return str(col).replace('\n', '').replace('\r', '').replace(' ', '').strip()
+        return "Unnamed"
+    return str(col).replace('\n', '').replace('\r', '').strip()
 
 
 def sync_single_excel_to_sqlite(file_path: str):
@@ -34,27 +32,37 @@ def sync_single_excel_to_sqlite(file_path: str):
     parsed_sheets = parse_workbook(file_path)
     
     # ==========================================
-    # 新增：中间层拦截清洗逻辑
-    # 作用：在数据入库前，修复所有由于 Alt+Enter 造成的非结构化换列表头
+    # 核心拦截器：清洗所有脏表头，并绝对防止列名重复导致数据库崩溃
     # ==========================================
     for sheet in parsed_sheets:
         old_columns = sheet.get("columns", [])
+        col_map = {}
+        seen_cols = set()
         
-        # 1. 建立旧表头到新（干净）表头的映射字典
-        col_map = {col: clean_column_name(col) for col in old_columns}
-        
-        # 2. 清洗工作表的列定义
+        for col in old_columns:
+            cleaned_c = clean_column_name(col)
+            # 防止多个空列或重名列在清洗后名字相同，导致 SQLite 报错 duplicate column
+            final_c = cleaned_c
+            counter = 1
+            while final_c in seen_cols:
+                final_c = f"{cleaned_c}_{counter}"
+                counter += 1
+                
+            seen_cols.add(final_c)
+            col_map[col] = final_c
+            
+        # 更新清洗后的工作表结构
         sheet["columns"] = [col_map[col] for col in old_columns]
-        
-        # 3. 清洗主键定义（如果有）
         if sheet.get("key_columns"):
             sheet["key_columns"] = [col_map.get(k, k) for k in sheet["key_columns"]]
             
-        # 4. 深度清洗每一行数据里的键名 (字典的 Key)
+        # 同步更新每一行数据里的键名
         for row_item in sheet.get("rows", []):
             old_data = row_item.get("data", {})
-            # 根据映射表替换所有的键名，值保持不变
-            new_data = {col_map.get(k, k): v for k, v in old_data.items()}
+            new_data = {}
+            for k, v in old_data.items():
+                new_key = col_map.get(k, k)
+                new_data[new_key] = v
             row_item["data"] = new_data
     # ==========================================
 
@@ -129,7 +137,6 @@ def sync_single_excel_to_sqlite(file_path: str):
                 if idx % 200 == 0 or idx == total_rows:
                     print(f"[SYNC] {sheet_name}: 已处理 {idx}/{total_rows}")
 
-            # 删除策略：仅删除当前来源文件下、本次不存在的数据
             file_existing_keys = [k for k in existing_map.keys() if k.startswith(f"{source_file}|")]
             for del_idx, row_key in enumerate(file_existing_keys, start=1):
                 if row_key not in current_keys:
@@ -183,7 +190,6 @@ def sync_excel_to_sqlite(file_path: str):
         status="success",
         detail_json=json.dumps(result["detail"], ensure_ascii=False)
     )
-
     return result
 
 
