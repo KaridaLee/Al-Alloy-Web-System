@@ -1,13 +1,14 @@
+import re
+import json
+import sqlite3
 from fastapi import APIRouter, Query
 from sqlalchemy import text
 from app.core.database import engine
 from io import BytesIO
 from typing import List
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import openpyxl
-import sqlite3
-import json
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -18,15 +19,26 @@ ELEMENTS_ORDER = [
 ]
 ELEMENTS_SET = set(ELEMENTS_ORDER)
 
+def extract_element_from_col(col_name: str):
+    """
+    核心智能表头映射算法：
+    利用正则匹配以大写字母开头、小写字母结尾（可选）的元素符号，
+    自动过滤掉后面的括号、汉字、百分号等备注干扰项。
+    例如："Si(9.6-12)" -> "Si", "Cu%" -> "Cu"
+    """
+    match = re.match(r'^([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', col_name.strip())
+    if match:
+        el = match.group(1)
+        if el in ELEMENTS_SET:
+            return el
+    return None
 
 class ExportItem(BaseModel):
     row_key: str
     sheet_name: str
 
-
 class ExportRequest(BaseModel):
     items: List[ExportItem]
-
 
 def normalize_detail_item(item: dict):
     if not item:
@@ -51,13 +63,14 @@ def normalize_detail_item(item: dict):
         if key in base_info:
             continue
 
-        if key in ELEMENTS_SET:
-            chemistry[key] = value
+        # 启用智能映射识别元素
+        el = extract_element_from_col(key)
+        if el:
+            chemistry[el] = value
             continue
 
         if key.startswith("化学成分"):
             continue
-
         if key.startswith("__"):
             continue
 
@@ -133,7 +146,6 @@ def search_records(
                 continue
 
             where_sql = " AND ".join(where_clauses)
-
             sql = f'''
             SELECT "__row_key", "__source_file", "__source_sheet", *
             FROM "{table_name}"
@@ -206,14 +218,25 @@ def export_excel(req: ExportRequest):
             ).mappings().first()
 
             if row_data:
+                row_dict = dict(row_data)
+                
+                # 动态生成本行的表头反向映射
+                el_col_map = {}
+                for k in row_dict.keys():
+                    el = extract_element_from_col(k)
+                    if el:
+                        el_col_map[el] = k
+
                 row_list = []
-                row_list.append(row_data.get("炉号") or "")
-                row_list.append(row_data.get("牌号") or "")
-                row_list.append(row_data.get("批次号") or "")
-                row_list.append(row_data.get("检测时间时间") or row_data.get("检测时间") or "")
+                row_list.append(row_dict.get("炉号") or "")
+                row_list.append(row_dict.get("牌号") or "")
+                row_list.append(row_dict.get("批次号") or "")
+                row_list.append(row_dict.get("检测时间时间") or row_dict.get("检测时间") or "")
 
                 for el in ELEMENTS_ORDER:
-                    val = row_data.get(el)
+                    actual_col = el_col_map.get(el)
+                    val = row_dict.get(actual_col) if actual_col else None
+                    
                     if val is None or val == "":
                         row_list.append(0.0)
                     else:
@@ -222,7 +245,7 @@ def export_excel(req: ExportRequest):
                         except (ValueError, TypeError):
                             row_list.append(val)
 
-                sf_val = row_data.get("SF")
+                sf_val = row_dict.get("SF")
                 if sf_val is None or sf_val == "":
                     row_list.append(0.0)
                 else:
@@ -250,7 +273,6 @@ def export_excel(req: ExportRequest):
 
 @router.get("/standards/pdfs")
 def list_standard_pdfs():
-    """直接读取 data/standards 目录下的所有 PDF 文件"""
     from app.core.config import BASE_DIR
     pdf_dir = BASE_DIR / "data" / "standards"
     if not pdf_dir.exists():
@@ -264,9 +286,7 @@ def list_standard_pdfs():
 
 @router.get("/standards/pdfs/{filename}")
 def get_standard_pdf_file(filename: str):
-    """直接响应 PDF 文件流用于前端 iframe 预览"""
     from app.core.config import BASE_DIR
-    from fastapi.responses import FileResponse
     file_path = BASE_DIR / "data" / "standards" / filename
     if file_path.exists():
         return FileResponse(str(file_path), media_type="application/pdf")
@@ -275,14 +295,7 @@ def get_standard_pdf_file(filename: str):
 
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
-    """
-    智能获取牌号列表：
-    从实际的 sys_sheet_meta (生产台账数据) 和 enterprise_standard 中汇集所有已知牌号。
-    保证哪怕没有手动添加过的牌号，只要在台账里出现过，也能点出来进行填报。
-    """
     brands = set()
-    
-    # 1. 扫描所有的台账表获取真实牌号
     with engine.begin() as conn:
         metas = conn.execute(text("SELECT table_name, columns_json FROM sys_sheet_meta")).mappings().all()
         for m in metas:
@@ -293,7 +306,6 @@ def search_standards(brand_name: str = Query("")):
                 for r in rows:
                     if r[0]: brands.add(str(r[0]).strip())
                     
-    # 2. 合并已有标准的牌号
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if db_path.exists():
@@ -302,7 +314,6 @@ def search_standards(brand_name: str = Query("")):
             for r in cursor.fetchall():
                 if r[0]: brands.add(str(r[0]).strip())
                 
-    # 3. 过滤与排序
     query = brand_name.strip().lower()
     if query:
         brands = {b for b in brands if query in b.lower()}
@@ -312,7 +323,6 @@ def search_standards(brand_name: str = Query("")):
 
 @router.get("/standards/detail")
 def get_standard_detail(brand_name: str = Query(...)):
-    """提取单个牌号已保存的标准数据"""
     from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if not db_path.exists():
@@ -321,13 +331,11 @@ def get_standard_detail(brand_name: str = Query(...)):
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute('SELECT tech_req_json FROM enterprise_standard WHERE brand_name = ?', (brand_name,)).fetchone()
-
         if not row:
             return {"success": True, "standard": {"tech_req": {}}}
 
         res = dict(row)
         try:
-            # 兼容新版的结构化存储，我们将完整的 {min/max} 结构存放在了 tech_req_json 中
             res["tech_req"] = json.loads(res["tech_req_json"]) if res.get("tech_req_json") else {}
         except Exception:
             res["tech_req"] = {}
@@ -347,10 +355,8 @@ class SaveStandardReq(BaseModel):
 
 @router.post("/standards/save")
 def save_standard_detail(req: SaveStandardReq):
-    """保存前端五宫格填报的结构化数据"""
     from app.core.config import DATA_DIR
     from datetime import datetime
-    
     db_path = DATA_DIR / "sqlite" / "standards.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -364,8 +370,6 @@ def save_standard_detail(req: SaveStandardReq):
             )
         """)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # 将传入的结构化数据直接 JSON 序列化并存入 tech_req_json 字段
         tech_json = json.dumps({k: v.dict() for k, v in req.elements.items()}, ensure_ascii=False)
         
         conn.execute("""

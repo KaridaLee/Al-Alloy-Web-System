@@ -34,7 +34,7 @@
           </div>
         </template>
 
-        <el-table :data="chemistryRows" border stripe style="width:100%;">
+        <el-table :data="chemistryRows" border stripe style="width:100%;" :cell-style="getCellStyle">
           <el-table-column prop="element" label="元素符号" width="80" align="center">
             <template #default="{ row }"><strong>{{ row.element }}</strong></template>
           </el-table-column>
@@ -79,25 +79,20 @@ const visibleInner = computed({
   set: (value) => emit('update:modelValue', value)
 })
 
-// 状态管理变量
 const defaultBrand = ref('')
 const overrideBrand = ref('')
 const currentStandard = ref(null)
 const allBrands = ref([])
 
-// 监听抽屉开启与关闭状态
 watch(visibleInner, async (newVal) => {
   if (newVal && props.record) {
-    // 1. 自动提取当前点击行的原始牌号
     const baseInfo = props.record.baseInfo || {}
     defaultBrand.value = baseInfo['牌号'] || ''
     
-    // 2. 加载默认牌号在标准库里的区间数据
     if (defaultBrand.value) {
       loadStandardData(defaultBrand.value)
     }
     
-    // 3. 拉取系统已知的所有可用牌号列表，供套用选择器使用
     try {
       const { data } = await searchStandards({ brand_name: '' })
       allBrands.value = data.items || []
@@ -105,7 +100,6 @@ watch(visibleInner, async (newVal) => {
       console.error('加载套用牌号下拉失败', e)
     }
   } else {
-    // 4. 【核心机制】退出抽屉时，彻底清空销毁临时重写变量，确保下次打开依然还原为默认值
     defaultBrand.value = ''
     overrideBrand.value = ''
     currentStandard.value = null
@@ -113,7 +107,6 @@ watch(visibleInner, async (newVal) => {
   }
 })
 
-// 加载指定牌号的技术与内控标准
 const loadStandardData = async (brandName) => {
   try {
     const { data } = await getStandardDetail({ brand_name: brandName })
@@ -125,7 +118,6 @@ const loadStandardData = async (brandName) => {
   }
 }
 
-// 联动选择事件：如果清空则回退到原始默认牌号标准，否则去拉取新选择的指标
 const handleOverrideChange = (val) => {
   if (val) {
     loadStandardData(val)
@@ -159,15 +151,12 @@ const baseInfoRows = computed(() => {
   }))
 })
 
-// 【核心机制】动态组装化学成分表格：混合实际测量值与当前选定的（默认或临时套用）上下限要求
 const chemistryRows = computed(() => {
   if (!props.record || !props.record.chemistry) return []
   
-  // 取出当前绑定的标准集合
   const techReq = currentStandard.value?.tech_req || {}
   
   return Object.entries(props.record.chemistry).map(([key, value]) => {
-    // 获取该元素对应的五宫格模型数据
     const std = techReq[key] || {}
     return {
       element: key,
@@ -187,6 +176,47 @@ const otherRows = computed(() => {
     value: formatValue(value)
   }))
 })
+
+// ==========================================
+// 核心逻辑：动态计算化学元素的越界颜色预警
+// ==========================================
+const getCellStyle = ({ row }) => {
+  // 将实际含量转为浮点数
+  const val = parseFloat(row.value)
+  if (isNaN(val)) return {}
+
+  // 解析上下限数值
+  const t_min = parseFloat(row.tech_min)
+  const c_min = parseFloat(row.ctrl_min)
+  const c_max = parseFloat(row.ctrl_max)
+  const t_max = parseFloat(row.tech_max)
+  
+  // 辅助函数：判断是否配置了该界限
+  const isNum = (n) => !isNaN(n)
+
+  // 1. 低于技术下限 (最严重偏低，#f54616，透明度50%用 rgba 换算即 245,70,22,0.5)
+  if (isNum(t_min) && val < t_min) {
+    return { backgroundColor: 'rgba(245, 70, 22, 0.5)' }
+  }
+  
+  // 2. 低于内控下限但没有低于技术下限 (#faaf3e，250,175,62,0.5)
+  if (isNum(c_min) && val < c_min) {
+    return { backgroundColor: 'rgba(250, 175, 62, 0.5)' }
+  }
+  
+  // 3. 超过技术上限 (最严重偏高，#2024fa，32,36,250,0.5)
+  if (isNum(t_max) && val > t_max) {
+    return { backgroundColor: 'rgba(32, 36, 250, 0.5)' }
+  }
+  
+  // 4. 高于内控上限但不高于技术上限 (#40bfff，64,191,255,0.5)
+  if (isNum(c_max) && val > c_max) {
+    return { backgroundColor: 'rgba(64, 191, 255, 0.5)' }
+  }
+
+  // 完全在内控范围内，或者是没有配置任何限制的情况，保持原样
+  return {}
+}
 </script>
 
 <style scoped>

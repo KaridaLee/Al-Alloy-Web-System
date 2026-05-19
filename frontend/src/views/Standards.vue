@@ -213,11 +213,16 @@ const fetchPdfList = async () => {
   }
 }
 
+// 修改点 1：PDF 文件列表应用自然文本和数字混合排序引擎
 const filteredPdfList = computed(() => {
-  if (!pdfSearchQuery.value) return pdfList.value
-  return pdfList.value.filter(item => 
-    item.filename.toLowerCase().includes(pdfSearchQuery.value.toLowerCase())
-  )
+  let list = [...pdfList.value]
+  if (pdfSearchQuery.value) {
+    list = list.filter(item => 
+      item.filename.toLowerCase().includes(pdfSearchQuery.value.toLowerCase())
+    )
+  }
+  // 按照文件名全自动正序排列 (支持自然数比对，使 22 自动排在 3 后面)
+  return list.sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: 'base' }))
 })
 
 const openPdfViewer = (filename) => {
@@ -236,13 +241,18 @@ const isEditing = ref(false)
 const saving = ref(false)
 const editFormData = ref({})
 
-// JSON导入相关
 const importJsonDialogVisible = ref(false)
 const jsonInputData = ref('')
 
+// 修改点 2：已有牌号表格请求拉取后，同样在前端进行自然序列正序排列
 const fetchStandards = async () => {
   const { data } = await searchStandards({ brand_name: searchBrand.value })
-  tableData.value = data.items || []
+  const items = data.items || []
+  
+  // 按照牌号名称顺序正序排列
+  items.sort((a, b) => a.brand_name.localeCompare(b.brand_name, undefined, { numeric: true, sensitivity: 'base' }))
+  
+  tableData.value = items
   if (!activeBrand.value) {
     selectedStandard.value = null
     isEditing.value = false
@@ -293,7 +303,6 @@ const cancelEdit = () => {
   isEditing.value = false
 }
 
-// 核心解析函数：转换字符串规则（包含 - 或者 ≤ 的规则）为最大最小值
 const parseRangeString = (strVal) => {
   let min = ''
   let max = ''
@@ -312,7 +321,6 @@ const parseRangeString = (strVal) => {
     min = '0'
     max = cleanedVal.replace('<', '').trim()
   } else {
-    // 只有一个具体数值时，作为上限处理
     max = cleanedVal
   }
   return { min, max }
@@ -333,14 +341,12 @@ const handleImportJson = () => {
       return
     }
     
-    // 如果 JSON 中的牌号命名与当前不匹配给出提示，但不阻止覆盖
     if (parsedData['牌号命名'] && !parsedData['牌号命名'].includes(activeBrand.value) && !activeBrand.value.includes(parsedData['牌号命名'])) {
       ElMessage.warning(`提示：JSON牌号【${parsedData['牌号命名']}】与当前所选【${activeBrand.value}】似乎不一致`)
     }
     
     let importedCount = 0
     Object.entries(chemData).forEach(([el, rules]) => {
-      // 在支持的元素内才进行覆盖
       if (editFormData.value[el]) {
         const techStr = rules['技术要求'] || ''
         const ctrlStr = rules['内控要求'] || ''

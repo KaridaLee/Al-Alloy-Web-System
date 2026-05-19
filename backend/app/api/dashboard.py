@@ -1,11 +1,20 @@
 import json
+import re
 from fastapi import APIRouter, Query
 from sqlalchemy import text
 from app.core.database import engine
-from app.api.search import ELEMENTS_ORDER  # 复用搜索模块定义的元素列表
+from app.api.search import ELEMENTS_ORDER, ELEMENTS_SET
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+def extract_element_from_col(col_name: str):
+    """提取智能清洗后的元素名称，供大屏看板趋势图使用"""
+    match = re.match(r'^([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', col_name.strip())
+    if match:
+        el = match.group(1)
+        if el in ELEMENTS_SET:
+            return el
+    return None
 
 @router.get("/overview")
 def overview():
@@ -32,7 +41,6 @@ def overview():
             cols = json.loads(s["columns_json"])
             safe_cols = [c.strip() for c in cols]
 
-            # 统计炉数
             if "炉号" in safe_cols:
                 row_count = conn.execute(text(f'''
                     SELECT COUNT(DISTINCT "炉号") AS cnt
@@ -53,7 +61,6 @@ def overview():
                 "lastSyncTime": s["last_sync_time"]
             })
 
-            # 统计牌号分布
             if "牌号" in safe_cols and "炉号" in safe_cols:
                 rows = conn.execute(text(f'''
                     SELECT "牌号" AS name, COUNT(DISTINCT "炉号") AS cnt
@@ -86,12 +93,11 @@ def overview():
             "judgeStats": judge_stats
         }
 
-
 @router.get("/brand-trends")
 def get_brand_trends(brand: str = Query(..., description="牌号名称")):
     """
     获取指定牌号最近10炉次的元素趋势数据。
-    要求：批次号必须带有 'DZ' 关键字。
+    使用提取到的包含 "DZ" 关键字的批次号，同时应用元素表头正则映射。
     """
     limit = 10
     all_data = []
@@ -101,18 +107,15 @@ def get_brand_trends(brand: str = Query(..., description="牌号名称")):
         
         for m in metas:
             cols = json.loads(m["columns_json"])
-            # 只有当表包含 牌号、炉号、批次号 时才参与计算
             if "牌号" not in cols or "炉号" not in cols or "批次号" not in cols:
                 continue
             
-            # 动态确定时间排序列
             time_col = "__row_key"
             if "检测时间时间" in cols: 
                 time_col = "检测时间时间"
             elif "检测时间" in cols: 
                 time_col = "检测时间"
 
-            # 选取该牌号且批次号包含 'DZ' 的数据
             sql = f'''
                 SELECT * FROM "{m["table_name"]}" 
                 WHERE "牌号" = :brand 
@@ -128,30 +131,35 @@ def get_brand_trends(brand: str = Query(..., description="牌号名称")):
             for r in rows:
                 all_data.append(dict(r))
 
-    # 1. 对来自不同表的所有符合条件的数据进行全局排序（按检测时间/主键）
     all_data.sort(
         key=lambda x: x.get("检测时间时间") or x.get("检测时间") or x.get("__row_key") or "", 
         reverse=True
     )
     
-    # 2. 取全局最近的10条
     recent_10 = all_data[:limit]
-    # 3. 折线图从左往右展示，因此需要反转为正序（旧 -> 新）
     recent_10.reverse()
 
-    # 提取炉号作为 X 轴标签
     furnace_nos = [r.get("炉号") or "-" for r in recent_10]
     
-    # 提取各元素趋势数据
     trends = {}
     valid_elements = []
     
     for el in ELEMENTS_ORDER:
         vals = []
         has_value = False
+        
         for r in recent_10:
-            v = r.get(el)
-            # 尝试转换为浮点数，转换失败或为空则补 0
+            row_dict = dict(r)
+            
+            # 为当前行动态寻找匹配的实际列名（如 "Si(9.6-12)" -> "Si"）
+            actual_col = None
+            for k in row_dict.keys():
+                if extract_element_from_col(k) == el:
+                    actual_col = k
+                    break
+                    
+            v = row_dict.get(actual_col) if actual_col else None
+            
             if v is not None and v != "":
                 try:
                     num_val = float(v)
@@ -163,7 +171,6 @@ def get_brand_trends(brand: str = Query(..., description="牌号名称")):
                 vals.append(0.0)
         
         trends[el] = vals
-        # 只有在最近10条中有实际数据的元素才加入轮播列表，避免轮播全零的空表
         if has_value:
             valid_elements.append(el)
 
@@ -171,5 +178,5 @@ def get_brand_trends(brand: str = Query(..., description="牌号名称")):
         "brand": brand,
         "furnace_nos": furnace_nos,
         "trends": trends,
-        "elements": valid_elements if valid_elements else ["Al"] # 兜底至少显示 Al
+        "elements": valid_elements if valid_elements else ["Al"]
     }
