@@ -66,16 +66,13 @@ def is_non_empty(value):
 def normalize_element_header(value: str):
     """
     将元素类表头统一规范化：
+    兼容中英文括号、特殊符号以及前后缀干扰。
     例如：
     - Cu
-    - Cu(≤0.1)
-    - Cu (≤0.1)
-    - Fe         (≤0.2)
+    - Cu（1.5-3.5）
+    - Si(9.6-12)
     - P(0.0035-0.0070)
-    统一映射为：
-    - Cu
-    - Fe
-    - P
+    统一映射为纯元素符号
     """
     text = normalize_text(value)
     if not text:
@@ -88,8 +85,8 @@ def normalize_element_header(value: str):
     if compact in ELEMENTS:
         return compact
 
-    # 匹配形如 Cu(≤0.1) / Fe(≤0.2) / P(0.0035-0.0070)
-    match = re.match(r"^([A-Z][a-z]?)(\(.*\))?$", compact)
+    # 使用高兼容性的穿透正则：提取首个元素符号，忽略其后的任何非字母字符（如中英文括号、数字、范围符号）
+    match = re.match(r'^[^a-zA-Z]*([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', compact)
     if match:
         elem = match.group(1)
         if elem in ELEMENTS:
