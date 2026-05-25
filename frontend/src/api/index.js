@@ -53,7 +53,6 @@ export const uploadExcel = (formData) => http.post('/api/system/upload', formDat
 
 export const searchStandards = (params) => http.get('/api/search/standards', { params })
 export const getStandardDetail = (params) => http.get('/api/search/standards/detail', { params })
-// 新增：获取 PDF 页数以便生成压缩图像占位
 export const getStandardPdfInfo = (params) => http.get(`/api/search/standards/file/${encodeURIComponent(params.brand_name)}/info`)
 export const syncAllStandards = () => http.post('/api/import/sync-standards')
 export const getStandardPdfs = () => http.get('/api/search/standards/pdfs')
@@ -62,13 +61,10 @@ export const saveStandardDetail = (data) => http.post('/api/search/standards/sav
 // ==============================================================================
 // 标准样品管理模块 API
 // ==============================================================================
-// 修复：将此处的 axios 替换为 http 实例
 export const getStandardSamples = () => http.get('/api/search/standard-samples')
 export const getStandardSampleDetail = (params) => http.get('/api/search/standard-samples/detail', { params })
 export const saveStandardSample = (data) => http.post('/api/search/standard-samples/save', data)
 export const deleteStandardSample = (data) => http.post('/api/search/standard-samples/delete', data)
-
-// === 本次新增 ===
-// 修复：将此处的 axios 替换为 http 实例
 export const deleteStandardPdf = (data) => http.post('/api/search/standards/pdfs/delete', data)
 export const renameStandardSample = (data) => http.post('/api/search/standard-samples/rename', data)
+export const matchStandardSample = (data) => http.post('/api/search/standard-samples/match', data)

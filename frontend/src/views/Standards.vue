@@ -141,7 +141,7 @@
     </el-row>
 
     <div style="font-size: 18px; font-weight: 700; margin-top: 32px; margin-bottom: 12px; color: #1e293b;">
-      标准样品数据管理
+      标准样品基础管理
     </div>
     
     <el-row :gutter="18">
@@ -232,6 +232,88 @@
       </el-col>
     </el-row>
 
+    <div style="font-size: 18px; font-weight: 700; margin-top: 32px; margin-bottom: 12px; color: #1e293b;">
+      标准样品智能推荐系统
+    </div>
+    
+    <el-row :gutter="18" style="margin-bottom: 40px;">
+      <el-col :span="8">
+        <el-card class="block-card">
+          <template #header>
+            <span style="font-weight:700;">1. 设置目标元素参数</span>
+          </template>
+          
+          <div v-for="(item, index) in targetElements" :key="index" style="display:flex; gap:8px; margin-bottom:12px;">
+            <el-select v-model="item.element" placeholder="选择元素" style="width: 120px;">
+              <el-option 
+                v-for="el in ELEMENTS_ORDER" 
+                :key="el" 
+                :label="el" 
+                :value="el" 
+                :disabled="isElementSelected(el, index)" 
+              />
+            </el-select>
+            <el-input v-model="item.value" placeholder="目标值 (%)" type="number" style="flex: 1;" />
+            <el-button type="danger" circle @click="removeTargetElement(index)">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </div>
+          
+          <el-button type="primary" plain style="width: 100%; margin-bottom: 16px;" @click="addTargetElement">
+            + 添加目标元素
+          </el-button>
+          
+          <el-button type="success" style="width: 100%;" @click="handleMatchSamples" :loading="matching">
+            🔍 智能检索最佳标样
+          </el-button>
+        </el-card>
+      </el-col>
+
+      <el-col :span="16">
+        <el-card class="block-card" style="min-height: 250px;">
+          <template #header>
+            <span style="font-weight:700;">2. 智能匹配推荐结果 (Top 3)</span>
+          </template>
+          
+          <div v-if="matchResults.length > 0">
+            <el-card 
+              v-for="(res, idx) in matchResults" 
+              :key="idx" 
+              style="margin-bottom: 16px; border: 1px solid #e2e8f0;" 
+              shadow="hover"
+            >
+              <template #header>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-weight:700; color: #1e293b; font-size: 16px;">
+                    {{ idx === 0 ? '🏆 最佳匹配' : (idx === 1 ? '🥈 优选备用 1' : '🥉 优选备用 2') }} : {{ res.sample_name }}
+                  </span>
+                  <el-tag :type="idx === 0 ? 'success' : (idx === 1 ? 'warning' : 'info')" size="large" effect="dark">
+                    综合匹配度: {{ res.match_rate }}%
+                  </el-tag>
+                </div>
+              </template>
+              
+              <el-table :data="getMatchDetailData(res)" border stripe size="small">
+                <el-table-column prop="element" label="元素" width="80" align="center">
+                  <template #default="{ row }"><strong>{{ row.element }}</strong></template>
+                </el-table-column>
+                <el-table-column prop="target" label="目标值 (%)" align="center" />
+                <el-table-column prop="sample" label="标样实际值 (%)" align="center" />
+                <el-table-column prop="diff" label="相对误差 (标样比目标)" align="center">
+                  <template #default="{ row }">
+                    <span :style="{ color: row.diff === 0 ? '#10b981' : (row.diff > 0 ? '#f59e0b' : '#3b82f6'), fontWeight: 'bold' }">
+                      {{ row.diff > 0 ? '+' : '' }}{{ row.diff }}
+                    </span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+          </div>
+          <el-empty v-else description="请先在左侧输入产品目标值并点击智能匹配"></el-empty>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-dialog v-model="pdfDialogVisible" :title="'原件预览：' + activePdfFile" width="75%" top="5vh" destroy-on-close>
       <div style="height: 75vh; border: 1px solid #e2e8f0; border-radius: 4px;">
         <iframe v-if="activePdfFile" :src="'/api/search/standards/pdfs/' + encodeURIComponent(activePdfFile)" width="100%" height="100%" frameborder="0" style="display: block;"></iframe>
@@ -256,11 +338,11 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { Search, Delete } from '@element-plus/icons-vue' // 新引入了 Delete 图标
 import { 
   searchStandards, getStandardDetail, getStandardPdfs, saveStandardDetail,
   getStandardSamples, getStandardSampleDetail, saveStandardSample, deleteStandardSample,
-  deleteStandardPdf, renameStandardSample // 引入刚写好的两个新接口
+  deleteStandardPdf, renameStandardSample, matchStandardSample // 引入智能匹配 API
 } from '../api'
 
 const ELEMENTS_ORDER = [
@@ -297,7 +379,6 @@ const openPdfViewer = (filename) => {
   pdfDialogVisible.value = true
 }
 
-// 删除 PDF 交互
 const handleDeletePdf = async (filename) => {
   try {
     await ElMessageBox.confirm(`确定要从服务器彻底删除原件【${filename}】吗？此操作无法恢复。`, '危险操作确认', {
@@ -305,7 +386,6 @@ const handleDeletePdf = async (filename) => {
       cancelButtonText: '取消',
       type: 'error'
     })
-    
     const { data } = await deleteStandardPdf({ filename })
     if (data.success) {
       ElMessage.success(data.message)
@@ -313,9 +393,7 @@ const handleDeletePdf = async (filename) => {
     } else {
       ElMessage.error(data.message)
     }
-  } catch (e) {
-    // 忽略用户取消弹窗
-  }
+  } catch (e) {}
 }
 
 // === 企标范围处理 ===
@@ -491,7 +569,6 @@ const handleAddSample = async () => {
   } catch (e) {}
 }
 
-// 新增加的重命名调用逻辑
 const handleRenameSample = async (row) => {
   try {
     const { value } = await ElMessageBox.prompt(`当前正在重命名【${row.sample_name}】`, '标准样品重命名', {
@@ -501,26 +578,17 @@ const handleRenameSample = async (row) => {
       inputPattern: /\S+/,
       inputErrorMessage: '样品名称不能为空格'
     })
-    
     if (value && value.trim() !== row.sample_name) {
-      const { data } = await renameStandardSample({
-        old_name: row.sample_name,
-        new_name: value.trim()
-      })
+      const { data } = await renameStandardSample({ old_name: row.sample_name, new_name: value.trim() })
       if (data.success) {
         ElMessage.success('重命名成功')
-        // 如果改的是当前高亮的样品，则同步更新激活状态以免数据丢失错乱
-        if (activeSample.value === row.sample_name) {
-          activeSample.value = value.trim()
-        }
+        if (activeSample.value === row.sample_name) activeSample.value = value.trim()
         await fetchSamples()
       } else {
         ElMessage.error(data.message)
       }
     }
-  } catch (e) {
-    // 忽略点击取消
-  }
+  } catch (e) {}
 }
 
 const handleDeleteSample = async (row) => {
@@ -563,6 +631,65 @@ const saveSampleEdit = async () => {
   } finally {
     sampleSaving.value = false
   }
+}
+
+// === 智能标样匹配处理逻辑 ===
+const targetElements = ref([{ element: '', value: '' }])
+const matchResults = ref([])
+const matching = ref(false)
+
+const isElementSelected = (el, currentIndex) => {
+  return targetElements.value.some((item, idx) => idx !== currentIndex && item.element === el)
+}
+
+const addTargetElement = () => {
+  targetElements.value.push({ element: '', value: '' })
+}
+
+const removeTargetElement = (index) => {
+  targetElements.value.splice(index, 1)
+}
+
+const handleMatchSamples = async () => {
+  const payloadTargets = {}
+  for (const item of targetElements.value) {
+    if (item.element && item.value !== '') {
+      payloadTargets[item.element] = parseFloat(item.value)
+    }
+  }
+
+  if (Object.keys(payloadTargets).length === 0) {
+    ElMessage.warning('请至少输入一个有效的目标元素和数值！')
+    return
+  }
+
+  matching.value = true
+  try {
+    const { data } = await matchStandardSample({ targets: payloadTargets })
+    if (data.success) {
+      matchResults.value = data.items || []
+      if (matchResults.value.length === 0) {
+        ElMessage.info('您的系统库中暂未录入任何标准样品数据，无法进行匹配。')
+      } else {
+        ElMessage.success('检索完毕！请查看右侧推荐结果。')
+      }
+    } else {
+      ElMessage.error(data.message || '系统匹配算法出现故障')
+    }
+  } catch (e) {
+    ElMessage.error('网络或服务器响应错误')
+  } finally {
+    matching.value = false
+  }
+}
+
+const getMatchDetailData = (res) => {
+  return Object.keys(res.detail_diff).map(el => ({
+    element: el,
+    target: res.detail_diff[el].target,
+    sample: res.detail_diff[el].sample,
+    diff: res.detail_diff[el].diff
+  }))
 }
 
 onMounted(() => {

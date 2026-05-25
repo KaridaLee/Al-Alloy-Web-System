@@ -22,10 +22,6 @@ ELEMENTS_ORDER = [
 ELEMENTS_SET = set(ELEMENTS_ORDER)
 
 def extract_element_from_col(col_name: str):
-    """
-    终极智能表头穿透映射算法：
-    允许前面有汉字干扰，无视括号，严格捕获唯一的元素符号。
-    """
     if not col_name: return None
     clean_name = str(col_name).strip()
     match = re.match(r'^[^a-zA-Z]*([A-Z][a-z]?)(?:[^a-zA-Z].*)?$', clean_name)
@@ -227,7 +223,6 @@ def get_standard_pdf_file(filename: str):
         return FileResponse(str(file_path), media_type="application/pdf")
     return {"success": False, "message": "PDF文件不存在"}
 
-# 【新增】物理删除指定的 PDF 文件
 class DeletePdfReq(BaseModel):
     filename: str
 
@@ -241,7 +236,6 @@ def delete_standard_pdf(req: DeletePdfReq):
         except Exception as e:
             return {"success": False, "message": f"删除失败: {str(e)}"}
     return {"success": False, "message": "文件不存在"}
-
 
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
@@ -306,7 +300,7 @@ def save_standard_detail(req: SaveStandardReq):
 
 
 # ==============================================================================
-# 新增模块：标准样品管理后端存储与 API 接口
+# 标准样品管理及智能匹配模块
 # ==============================================================================
 
 SAMPLES_DB_PATH = DATA_DIR / "sqlite" / "standard_samples.db"
@@ -366,7 +360,6 @@ def save_sample_detail(req: SaveSampleReq):
         """, (req.sample_name, values_json, now))
     return {"success": True, "message": "标准样品指标保存成功"}
 
-# 【新增】重命名标准样品名册名称
 class RenameSampleReq(BaseModel):
     old_name: str
     new_name: str
@@ -385,7 +378,6 @@ def rename_standard_sample(req: RenameSampleReq):
         conn.execute("UPDATE standard_samples SET sample_name = ? WHERE sample_name = ?", (req.new_name, req.old_name))
     return {"success": True, "message": "名称已更新"}
 
-
 @router.post("/standard-samples/delete")
 def delete_standard_sample(payload: dict):
     sample_name = payload.get("sample_name")
@@ -396,3 +388,63 @@ def delete_standard_sample(payload: dict):
     with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
         conn.execute("DELETE FROM standard_samples WHERE sample_name = ?", (sample_name,))
     return {"success": True, "message": "标准样品已成功移除"}
+
+# 【新增】智能匹配核心算法接口
+class MatchSampleReq(BaseModel):
+    targets: dict[str, float]
+
+@router.post("/standard-samples/match")
+def match_standard_samples(req: MatchSampleReq):
+    init_samples_db()
+    targets = req.targets
+    if not targets:
+        return {"success": False, "message": "请输入至少一个目标元素"}
+
+    total_target_val = sum(targets.values())
+
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT sample_name, values_json FROM standard_samples").fetchall()
+
+    results = []
+    for row in rows:
+        try:
+            sample_vals = json.loads(row["values_json"]) if row["values_json"] else {}
+        except:
+            sample_vals = {}
+
+        total_error = 0
+        detail_diff = {}
+        for el, t_val in targets.items():
+            s_val_str = sample_vals.get(el, "")
+            try:
+                s_val = float(s_val_str)
+            except:
+                s_val = 0.0 # 若标样没有该元素，视为含量为0
+
+            abs_diff = abs(t_val - s_val)
+            total_error += abs_diff
+            
+            # 保存明细，diff > 0 代表标样比目标多，diff < 0 代表标样比目标少
+            detail_diff[el] = {
+                "target": t_val,
+                "sample": s_val,
+                "diff": round(s_val - t_val, 4)
+            }
+
+        if total_target_val > 0:
+            ratio = total_error / total_target_val
+            match_rate = max(0.0, 100.0 * (1 - ratio))
+        else:
+            match_rate = 0.0 if total_error > 0 else 100.0
+
+        results.append({
+            "sample_name": row["sample_name"],
+            "match_rate": round(match_rate, 2),
+            "total_error": total_error,
+            "detail_diff": detail_diff
+        })
+
+    # 按累计误差从小到大排序，取前三名
+    results.sort(key=lambda x: x["total_error"])
+    return {"success": True, "items": results[:3]}
