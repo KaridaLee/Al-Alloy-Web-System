@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import openpyxl
 from sqlalchemy import text
 from app.core.database import engine
-from app.core.config import DATA_DIR, BASE_DIR  # 将核心目录配置提取至顶部全局作用域
+from app.core.config import DATA_DIR, BASE_DIR
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -65,7 +65,6 @@ def normalize_detail_item(item: dict):
 
         el = extract_element_from_col(key)
         if el:
-            # 防止数据库历史脏数据导致空值覆盖了真实数据
             if value is not None and str(value).strip() != "":
                 chemistry[el] = value
             elif el not in chemistry:
@@ -228,6 +227,22 @@ def get_standard_pdf_file(filename: str):
         return FileResponse(str(file_path), media_type="application/pdf")
     return {"success": False, "message": "PDF文件不存在"}
 
+# 【新增】物理删除指定的 PDF 文件
+class DeletePdfReq(BaseModel):
+    filename: str
+
+@router.post("/standards/pdfs/delete")
+def delete_standard_pdf(req: DeletePdfReq):
+    file_path = BASE_DIR / "data" / "standards" / req.filename
+    if file_path.exists():
+        try:
+            file_path.unlink()
+            return {"success": True, "message": f"文件 {req.filename} 已永久删除"}
+        except Exception as e:
+            return {"success": False, "message": f"删除失败: {str(e)}"}
+    return {"success": False, "message": "文件不存在"}
+
+
 @router.get("/standards")
 def search_standards(brand_name: str = Query("")):
     brands = set()
@@ -294,11 +309,9 @@ def save_standard_detail(req: SaveStandardReq):
 # 新增模块：标准样品管理后端存储与 API 接口
 # ==============================================================================
 
-# 定义标准样品数据库的路径
 SAMPLES_DB_PATH = DATA_DIR / "sqlite" / "standard_samples.db"
 
 def init_samples_db():
-    """初始化标准样品专用 SQLite 数据库"""
     SAMPLES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
         conn.execute("""
@@ -309,12 +322,10 @@ def init_samples_db():
             )
         """)
 
-# 执行初始化确保新数据库存在
 init_samples_db()
 
 @router.get("/standard-samples")
 def list_standard_samples():
-    """拉取所有已添加的标准样品名册"""
     init_samples_db()
     with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
@@ -323,7 +334,6 @@ def list_standard_samples():
 
 @router.get("/standard-samples/detail")
 def get_sample_detail(sample_name: str = Query(...)):
-    """获取指定样品的各化学元素标准值"""
     init_samples_db()
     with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
@@ -338,11 +348,10 @@ def get_sample_detail(sample_name: str = Query(...)):
 
 class SaveSampleReq(BaseModel):
     sample_name: str
-    elements: dict[str, str]  # 结构如: {"Si": "11.5", "Cu": "2.3"}
+    elements: dict[str, str]
 
 @router.post("/standard-samples/save")
 def save_sample_detail(req: SaveSampleReq):
-    """保存或更新标准样品的元素对应标准值"""
     init_samples_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     values_json = json.dumps(req.elements, ensure_ascii=False)
@@ -357,9 +366,28 @@ def save_sample_detail(req: SaveSampleReq):
         """, (req.sample_name, values_json, now))
     return {"success": True, "message": "标准样品指标保存成功"}
 
+# 【新增】重命名标准样品名册名称
+class RenameSampleReq(BaseModel):
+    old_name: str
+    new_name: str
+
+@router.post("/standard-samples/rename")
+def rename_standard_sample(req: RenameSampleReq):
+    if not req.old_name or not req.new_name:
+        return {"success": False, "message": "新旧名称均不能为空"}
+    
+    init_samples_db()
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        existing = conn.execute("SELECT 1 FROM standard_samples WHERE sample_name = ?", (req.new_name,)).fetchone()
+        if existing:
+            return {"success": False, "message": "目标名称已被其他样品占用，请更换"}
+        
+        conn.execute("UPDATE standard_samples SET sample_name = ? WHERE sample_name = ?", (req.new_name, req.old_name))
+    return {"success": True, "message": "名称已更新"}
+
+
 @router.post("/standard-samples/delete")
 def delete_standard_sample(payload: dict):
-    """根据样品名称移除该标准样品档案"""
     sample_name = payload.get("sample_name")
     if not sample_name:
         return {"success": False, "message": "样品名称不能为空"}

@@ -23,11 +23,10 @@
       <el-table :data="filteredPdfList" border stripe style="width:100%;" max-height="450">
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="filename" label="PDF 原件名称" />
-        <el-table-column label="操作" width="120" align="center">
+        <el-table-column label="操作" width="160" align="center">
           <template #default="{ row }">
-            <el-button type="success" link @click="openPdfViewer(row.filename)">
-              查看原件
-            </el-button>
+            <el-button type="success" link @click="openPdfViewer(row.filename)">查看原件</el-button>
+            <el-button type="danger" link @click="handleDeletePdf(row.filename)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -172,9 +171,10 @@
             max-height="500"
             @current-change="handleSampleRowSelect"
           >
-            <el-table-column prop="sample_name" label="样品名称 (点击配置内部标准值)" />
-            <el-table-column label="操作" width="70" align="center">
+            <el-table-column prop="sample_name" label="样品名称" />
+            <el-table-column label="操作" width="120" align="center">
               <template #default="{ row }">
+                <el-button type="primary" link size="small" @click.stop="handleRenameSample(row)">重命名</el-button>
                 <el-button type="danger" link size="small" @click.stop="handleDeleteSample(row)">删除</el-button>
               </template>
             </el-table-column>
@@ -232,40 +232,17 @@
       </el-col>
     </el-row>
 
-    <el-dialog
-      v-model="pdfDialogVisible"
-      :title="'原件预览：' + activePdfFile"
-      width="75%"
-      top="5vh"
-      destroy-on-close
-    >
+    <el-dialog v-model="pdfDialogVisible" :title="'原件预览：' + activePdfFile" width="75%" top="5vh" destroy-on-close>
       <div style="height: 75vh; border: 1px solid #e2e8f0; border-radius: 4px;">
-        <iframe
-          v-if="activePdfFile"
-          :src="'/api/search/standards/pdfs/' + encodeURIComponent(activePdfFile)"
-          width="100%"
-          height="100%"
-          frameborder="0"
-          style="display: block;"
-        ></iframe>
+        <iframe v-if="activePdfFile" :src="'/api/search/standards/pdfs/' + encodeURIComponent(activePdfFile)" width="100%" height="100%" frameborder="0" style="display: block;"></iframe>
       </div>
     </el-dialog>
 
-    <el-dialog
-      v-model="importJsonDialogVisible"
-      title="导入 JSON 配置数据"
-      width="50%"
-      destroy-on-close
-    >
+    <el-dialog v-model="importJsonDialogVisible" title="导入 JSON 配置数据" width="50%" destroy-on-close>
       <div style="margin-bottom: 12px; font-size: 13px; color: #64748b;">
-        请将符合格式要求的 JSON 文本粘贴在下方，系统会自动解析范围规则（如 ≤ 会自动解析下限为 0）。
+        请将符合格式要求的 JSON 文本粘贴在下方，系统会自动解析范围规则。
       </div>
-      <el-input
-        v-model="jsonInputData"
-        type="textarea"
-        :rows="12"
-        placeholder='{"牌号命名":"...", "化学成分":{"Si":{"技术要求":"11.0-12.5","内控要求":"11.2-11.8"}}}'
-      />
+      <el-input v-model="jsonInputData" type="textarea" :rows="12" placeholder='{"牌号命名":"...", "化学成分":{"Si":{"技术要求":"11.0-12.5","内控要求":"11.2-11.8"}}}' />
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="importJsonDialogVisible = false">取消</el-button>
@@ -273,7 +250,6 @@
         </span>
       </template>
     </el-dialog>
-
   </div>
 </template>
 
@@ -283,7 +259,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { 
   searchStandards, getStandardDetail, getStandardPdfs, saveStandardDetail,
-  getStandardSamples, getStandardSampleDetail, saveStandardSample, deleteStandardSample
+  getStandardSamples, getStandardSampleDetail, saveStandardSample, deleteStandardSample,
+  deleteStandardPdf, renameStandardSample // 引入刚写好的两个新接口
 } from '../api'
 
 const ELEMENTS_ORDER = [
@@ -292,9 +269,7 @@ const ELEMENTS_ORDER = [
   "Ga", "Hg", "Li", "Mo", "Na", "P", "V"
 ]
 
-// ==============================================================================
-// 1. PDF 企标原件库逻辑
-// ==============================================================================
+// === PDF 处理 ===
 const pdfList = ref([])
 const pdfSearchQuery = ref('')
 const pdfDialogVisible = ref(false)
@@ -312,11 +287,8 @@ const fetchPdfList = async () => {
 const filteredPdfList = computed(() => {
   let list = [...pdfList.value]
   if (pdfSearchQuery.value) {
-    list = list.filter(item => 
-      item.filename.toLowerCase().includes(pdfSearchQuery.value.toLowerCase())
-    )
+    list = list.filter(item => item.filename.toLowerCase().includes(pdfSearchQuery.value.toLowerCase()))
   }
-  // 自然文本和数字混合排序引擎 (如 标样22 会排在 标样3 后面)
   return list.sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: 'base' }))
 })
 
@@ -325,29 +297,42 @@ const openPdfViewer = (filename) => {
   pdfDialogVisible.value = true
 }
 
+// 删除 PDF 交互
+const handleDeletePdf = async (filename) => {
+  try {
+    await ElMessageBox.confirm(`确定要从服务器彻底删除原件【${filename}】吗？此操作无法恢复。`, '危险操作确认', {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'error'
+    })
+    
+    const { data } = await deleteStandardPdf({ filename })
+    if (data.success) {
+      ElMessage.success(data.message)
+      await fetchPdfList()
+    } else {
+      ElMessage.error(data.message)
+    }
+  } catch (e) {
+    // 忽略用户取消弹窗
+  }
+}
 
-// ==============================================================================
-// 2. 企业标准指标范围配置逻辑
-// ==============================================================================
+// === 企标范围处理 ===
 const searchBrand = ref('')
 const tableData = ref([])
 const activeBrand = ref('')
 const selectedStandard = ref(null)
-
 const isEditing = ref(false)
 const saving = ref(false)
 const editFormData = ref({})
-
 const importJsonDialogVisible = ref(false)
 const jsonInputData = ref('')
 
 const fetchStandards = async () => {
   const { data } = await searchStandards({ brand_name: searchBrand.value })
   const items = data.items || []
-  
-  // 自然序列正序重新排列企业牌号名
   items.sort((a, b) => a.brand_name.localeCompare(b.brand_name, undefined, { numeric: true, sensitivity: 'base' }))
-  
   tableData.value = items
   if (!activeBrand.value) {
     selectedStandard.value = null
@@ -359,7 +344,6 @@ const handleRowSelect = async (currentRow) => {
   if (!currentRow) return
   activeBrand.value = currentRow.brand_name
   isEditing.value = false
-  
   const { data } = await getStandardDetail({ brand_name: currentRow.brand_name })
   if (data.success) {
     selectedStandard.value = data.standard
@@ -371,41 +355,27 @@ const viewGridData = computed(() => {
   return ELEMENTS_ORDER.filter(el => {
     const v = selectedStandard.value.tech_req[el]
     return v && (v.tech_min || v.tech_max || v.ctrl_min || v.ctrl_max)
-  }).map(el => ({
-    element: el,
-    ...selectedStandard.value.tech_req[el]
-  }))
+  }).map(el => ({ element: el, ...selectedStandard.value.tech_req[el] }))
 })
 
 const enterEditMode = () => {
   const initData = {}
-  ELEMENTS_ORDER.forEach(el => {
-    initData[el] = { tech_min: '', ctrl_min: '', ctrl_max: '', tech_max: '' }
-  })
-  
+  ELEMENTS_ORDER.forEach(el => initData[el] = { tech_min: '', ctrl_min: '', ctrl_max: '', tech_max: '' })
   if (selectedStandard.value && selectedStandard.value.tech_req) {
     Object.entries(selectedStandard.value.tech_req).forEach(([el, vals]) => {
-      if (initData[el] && typeof vals === 'object') {
-        initData[el] = { ...initData[el], ...vals }
-      }
+      if (initData[el] && typeof vals === 'object') initData[el] = { ...initData[el], ...vals }
     })
   }
-  
   editFormData.value = initData
   isEditing.value = true
 }
 
-const cancelEdit = () => {
-  isEditing.value = false
-}
+const cancelEdit = () => isEditing.value = false
 
 const parseRangeString = (strVal) => {
-  let min = ''
-  let max = ''
+  let min = '', max = ''
   if (!strVal || strVal === '-' || strVal === '—') return { min, max }
-  
   const cleanedVal = strVal.trim()
-  
   if (cleanedVal.includes('-')) {
     const parts = cleanedVal.split('-')
     min = parts[0].trim()
@@ -423,33 +393,17 @@ const parseRangeString = (strVal) => {
 }
 
 const handleImportJson = () => {
-  if (!jsonInputData.value) {
-    ElMessage.warning('请输入 JSON 数据')
-    return
-  }
-  
+  if (!jsonInputData.value) return ElMessage.warning('请输入 JSON 数据')
   try {
     const parsedData = JSON.parse(jsonInputData.value)
     const chemData = parsedData['化学成分'] || parsedData['成分要求']
-    
-    if (!chemData) {
-      ElMessage.warning('未在 JSON 中找到“化学成分”字段')
-      return
-    }
-    
-    if (parsedData['牌号命名'] && !parsedData['牌号命名'].includes(activeBrand.value) && !activeBrand.value.includes(parsedData['牌号命名'])) {
-      ElMessage.warning(`提示：JSON牌号【${parsedData['牌号命名']}】与当前所选【${activeBrand.value}】似乎不一致`)
-    }
+    if (!chemData) return ElMessage.warning('未在 JSON 中找到“化学成分”字段')
     
     let importedCount = 0
     Object.entries(chemData).forEach(([el, rules]) => {
       if (editFormData.value[el]) {
-        const techStr = rules['技术要求'] || ''
-        const ctrlStr = rules['内控要求'] || ''
-        
-        const techObj = parseRangeString(techStr)
-        const ctrlObj = parseRangeString(ctrlStr)
-        
+        const techObj = parseRangeString(rules['技术要求'] || '')
+        const ctrlObj = parseRangeString(rules['内控要求'] || '')
         editFormData.value[el].tech_min = techObj.min
         editFormData.value[el].tech_max = techObj.max
         editFormData.value[el].ctrl_min = ctrlObj.min
@@ -457,50 +411,35 @@ const handleImportJson = () => {
         importedCount++
       }
     })
-    
-    ElMessage.success(`导入成功，共解析了 ${importedCount} 个元素的指标（点击“保存至数据库”生效）`)
+    ElMessage.success(`解析成功 ${importedCount} 条（点击“保存至数据库”生效）`)
     importJsonDialogVisible.value = false
     jsonInputData.value = ''
-    
   } catch (error) {
-    ElMessage.error('JSON 格式异常，请检查是否符合标准的键值对规范！')
-    console.error(error)
+    ElMessage.error('JSON 格式异常')
   }
 }
 
 const saveEdit = async () => {
   saving.value = true
-  
   const validElements = {}
   Object.entries(editFormData.value).forEach(([el, vals]) => {
-    if (vals.tech_min || vals.ctrl_min || vals.ctrl_max || vals.tech_max) {
-      validElements[el] = vals
-    }
+    if (vals.tech_min || vals.ctrl_min || vals.ctrl_max || vals.tech_max) validElements[el] = vals
   })
-  
-  const payload = {
-    brand_name: activeBrand.value,
-    elements: validElements
-  }
-  
   try {
-    const { data } = await saveStandardDetail(payload)
+    const { data } = await saveStandardDetail({ brand_name: activeBrand.value, elements: validElements })
     if (data.success) {
-      ElMessage.success('指标保存成功！')
+      ElMessage.success('保存成功！')
       isEditing.value = false
       handleRowSelect({ brand_name: activeBrand.value })
     }
   } catch (e) {
-    ElMessage.error('保存失败，请检查网络或控制台日志')
+    ElMessage.error('保存异常')
   } finally {
     saving.value = false
   }
 }
 
-
-// ==============================================================================
-// 3. 新增功能：标准样品自主维护控制流
-// ==============================================================================
+// === 标准样品库处理 ===
 const sampleTableData = ref([])
 const newSampleName = ref('')
 const activeSample = ref('')
@@ -509,83 +448,87 @@ const isSampleEditing = ref(false)
 const sampleSaving = ref(false)
 const sampleEditFormData = ref({})
 
-// 获取标准样品名册
 const fetchSamples = async () => {
   try {
     const { data } = await getStandardSamples()
     const items = data.items || []
-    // 样品名称应用自然文本序列进行前端正序排列
     items.sort((a, b) => a.sample_name.localeCompare(b.sample_name, undefined, { numeric: true, sensitivity: 'base' }))
     sampleTableData.value = items
-  } catch (e) {
-    console.error('拉取标准样品名册失败:', e)
-  }
+  } catch (e) {}
 }
 
-// 选中样品切换右侧面板数据展示
 const handleSampleRowSelect = async (currentRow) => {
   if (!currentRow) return
   activeSample.value = currentRow.sample_name
   isSampleEditing.value = false
-  
   try {
     const { data } = await getStandardSampleDetail({ sample_name: currentRow.sample_name })
-    if (data.success) {
-      selectedSampleValues.value = data.values || {}
-    }
-  } catch (e) {
-    console.error('拉取指定样品元素参考值失效:', e)
-  }
+    if (data.success) selectedSampleValues.value = data.values || {}
+  } catch (e) {}
 }
 
-// 过滤非空样品元素标准值以构建表格渲染源
 const sampleViewGridData = computed(() => {
   if (!selectedSampleValues.value) return []
   return ELEMENTS_ORDER.filter(el => {
     const val = selectedSampleValues.value[el]
     return val !== undefined && val !== null && val !== ''
-  }).map(el => ({
-    element: el,
-    value: selectedSampleValues.value[el]
-  }))
+  }).map(el => ({ element: el, value: selectedSampleValues.value[el] }))
 })
 
-// 添加新样品建档
 const handleAddSample = async () => {
   const name = newSampleName.value.trim()
-  if (!name) {
-    ElMessage.warning('请输入要创立的标准样品名称或编号')
-    return
-  }
+  if (!name) return ElMessage.warning('请输入名称')
   if (sampleTableData.value.some(s => s.sample_name.toLowerCase() === name.toLowerCase())) {
-    ElMessage.warning('该标准样品编码已在名册中登记，切勿重复录入')
-    return
+    return ElMessage.warning('不可建立同名样品档案')
   }
-  
   try {
     const { data } = await saveStandardSample({ sample_name: name, elements: {} })
     if (data.success) {
-      ElMessage.success(`标准样品【${name}】档案建立成功`)
+      ElMessage.success('建立成功')
       newSampleName.value = ''
       await fetchSamples()
     }
+  } catch (e) {}
+}
+
+// 新增加的重命名调用逻辑
+const handleRenameSample = async (row) => {
+  try {
+    const { value } = await ElMessageBox.prompt(`当前正在重命名【${row.sample_name}】`, '标准样品重命名', {
+      confirmButtonText: '保存更改',
+      cancelButtonText: '取消',
+      inputValue: row.sample_name,
+      inputPattern: /\S+/,
+      inputErrorMessage: '样品名称不能为空格'
+    })
+    
+    if (value && value.trim() !== row.sample_name) {
+      const { data } = await renameStandardSample({
+        old_name: row.sample_name,
+        new_name: value.trim()
+      })
+      if (data.success) {
+        ElMessage.success('重命名成功')
+        // 如果改的是当前高亮的样品，则同步更新激活状态以免数据丢失错乱
+        if (activeSample.value === row.sample_name) {
+          activeSample.value = value.trim()
+        }
+        await fetchSamples()
+      } else {
+        ElMessage.error(data.message)
+      }
+    }
   } catch (e) {
-    ElMessage.error('样品登记发生网络调用错误')
+    // 忽略点击取消
   }
 }
 
-// 移除某个标准样品信息
 const handleDeleteSample = async (row) => {
   try {
-    await ElMessageBox.confirm(`此操作将永久卸载标准样品【${row.sample_name}】的所有成分指标数据，是否确认？`, '删除警告', {
-      confirmButtonText: '强制删除',
-      cancelButtonText: '容我想想',
-      type: 'warning'
-    })
-    
+    await ElMessageBox.confirm(`永久删除样品【${row.sample_name}】的所有记录？`, '警告', { type: 'warning' })
     const { data } = await deleteStandardSample({ sample_name: row.sample_name })
     if (data.success) {
-      ElMessage.success('该标样档案已成功移除')
+      ElMessage.success('已删除')
       if (activeSample.value === row.sample_name) {
         activeSample.value = ''
         selectedSampleValues.value = {}
@@ -593,55 +536,39 @@ const handleDeleteSample = async (row) => {
       }
       await fetchSamples()
     }
-  } catch (e) {
-    if (e !== 'cancel') console.error(e)
-  }
+  } catch (e) {}
 }
 
-// 进入样品指标修改模式
 const enterSampleEditMode = () => {
   const initData = {}
-  ELEMENTS_ORDER.forEach(el => {
-    initData[el] = selectedSampleValues.value[el] || ''
-  })
+  ELEMENTS_ORDER.forEach(el => initData[el] = selectedSampleValues.value[el] || '')
   sampleEditFormData.value = initData
   isSampleEditing.value = true
 }
 
-const cancelSampleEdit = () => {
-  isSampleEditing.value = false
-}
+const cancelSampleEdit = () => isSampleEditing.value = false
 
-// 提交样品化学成分录入数据
 const saveSampleEdit = async () => {
   sampleSaving.value = true
   try {
-    const payload = {
-      sample_name: activeSample.value,
-      elements: sampleEditFormData.value
-    }
-    const { data } = await saveStandardSample(payload)
+    const { data } = await saveStandardSample({ sample_name: activeSample.value, elements: sampleEditFormData.value })
     if (data.success) {
-      ElMessage.success('标准参考值入库成功！')
+      ElMessage.success('保存成功')
       isSampleEditing.value = false
-      
-      // 变动完成后立即刷新最新的详情试图
       const detailRes = await getStandardSampleDetail({ sample_name: activeSample.value })
       selectedSampleValues.value = detailRes.data.values || {}
     }
   } catch (e) {
-    ElMessage.error('样品指标写入异常')
+    ElMessage.error('保存失败')
   } finally {
     sampleSaving.value = false
   }
 }
 
-
-// 生命周期初始化钩子
 onMounted(() => {
   fetchPdfList()
   fetchStandards()
-  fetchSamples() // 页面初始化自动抓取标样列表
+  fetchSamples()
 })
 </script>
 

@@ -63,21 +63,15 @@
       <el-table :data="items" border stripe style="width:100%;" @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="55" align="center" />
         
-        <el-table-column prop="_sheet_name" label="工作表" width="120" />
-        <el-table-column prop="炉号" label="炉号" width="120" />
-        <el-table-column prop="牌号" label="牌号" width="180" />
-        <el-table-column prop="批次号" label="批次号" width="160" />
-        <el-table-column prop="检测时间时间" label="检测时间" width="190" />
-        <el-table-column label="判定" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row['判定'] === '合格' ? 'success' : 'warning'">
-              {{ row['判定'] || '-' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="备注" label="备注" />
-        <el-table-column prop="__source_file" label="来源文件" width="220" />
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column prop="_sheet_name" label="工作表" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="炉号" label="炉号" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="牌号" label="牌号" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="批次号" label="批次号" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="检测时间时间" label="检测时间" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="备注" label="备注" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="__source_file" label="来源文件" min-width="220" show-overflow-tooltip />
+        
+        <el-table-column label="操作" width="80" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="showDetail(row)">详情</el-button>
           </template>
@@ -103,7 +97,6 @@
 <script setup>
 import { onMounted, ref, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-// 引入新的 exportRecords API
 import { searchRecords, getRecordDetail, exportRecords } from '../api'
 import RecordDetailDrawer from '../components/RecordDetailDrawer.vue'
 
@@ -120,7 +113,6 @@ const drawerVisible = ref(false)
 const currentRecord = ref(null)
 const isMobile = ref(false)
 
-// 新增多选与导出相关的响应式变量
 const selectedRows = ref([])
 const exporting = ref(false)
 
@@ -168,12 +160,10 @@ const showDetail = async (row) => {
   drawerVisible.value = true
 }
 
-// 新增：处理表格多选变化
 const handleSelectionChange = (val) => {
   selectedRows.value = val
 }
 
-// 新增：处理导出请求
 const handleExport = async () => {
   if (selectedRows.value.length === 0) return
   
@@ -188,13 +178,11 @@ const handleExport = async () => {
 
     const response = await exportRecords(payload)
     
-    // 生成文件下载
     const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
     
-    // 文件名附加当前时间
     const timeStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     link.download = `元素数据导出_${timeStr}.xlsx`
     
@@ -221,3 +209,25 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', checkMobile)
 })
 </script>
+
+<style scoped>
+.block-card {
+  border-radius: 12px;
+}
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: #1e293b;
+}
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sub-title {
+  font-size: 13px;
+  color: #64748b;
+  margin-top: 4px;
+}
+</style>

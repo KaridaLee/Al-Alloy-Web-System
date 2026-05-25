@@ -67,4 +67,8 @@ export const getStandardSampleDetail = (params) => axios.get('/api/search/standa
 export const saveStandardSample = (data) => axios.post('/api/search/standard-samples/save', data)
 export const deleteStandardSample = (data) => axios.post('/api/search/standard-samples/delete', data)
 
+// === 本次新增 ===
+export const deleteStandardPdf = (data) => axios.post('/api/search/standards/pdfs/delete', data)
+export const renameStandardSample = (data) => axios.post('/api/search/standard-samples/rename', data)
+
 export default http
