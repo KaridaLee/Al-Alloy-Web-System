@@ -141,6 +141,97 @@
       </el-col>
     </el-row>
 
+    <div style="font-size: 18px; font-weight: 700; margin-top: 32px; margin-bottom: 12px; color: #1e293b;">
+      标准样品数据管理
+    </div>
+    
+    <el-row :gutter="18">
+      <el-col :span="8">
+        <el-card class="block-card">
+          <template #header>
+            <div style="display:flex; flex-direction: column; gap: 10px;">
+              <span style="font-weight:700;">标准样品自主建立名册</span>
+              <div style="display:flex; gap: 8px;">
+                <el-input
+                  v-model="newSampleName"
+                  placeholder="输入新样品编码/名称"
+                  size="small"
+                  clearable
+                />
+                <el-button type="primary" size="small" @click="handleAddSample">添加建档</el-button>
+              </div>
+            </div>
+          </template>
+
+          <el-table 
+            :data="sampleTableData" 
+            border 
+            stripe 
+            highlight-current-row
+            style="width:100%; cursor:pointer;"
+            max-height="500"
+            @current-change="handleSampleRowSelect"
+          >
+            <el-table-column prop="sample_name" label="样品名称 (点击配置内部标准值)" />
+            <el-table-column label="操作" width="70" align="center">
+              <template #default="{ row }">
+                <el-button type="danger" link size="small" @click.stop="handleDeleteSample(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-col>
+
+      <el-col :span="16">
+        <el-card class="block-card">
+          <template #header>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-weight:700; color: #1e293b;">
+                {{ activeSample ? `【${activeSample}】各化学元素含量标准值 (%)` : '请在左侧选择或创建一个标准样品' }}
+              </div>
+              <div v-if="activeSample">
+                <el-button v-if="!isSampleEditing" type="primary" size="small" @click="enterSampleEditMode">
+                  编辑标准值
+                </el-button>
+                <div v-else style="display: flex; gap: 8px;">
+                  <el-button size="small" @click="cancelSampleEdit">取消</el-button>
+                  <el-button type="success" size="small" :loading="sampleSaving" @click="saveSampleEdit">
+                    保存至样品库
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div v-if="activeSample">
+            <el-table v-if="!isSampleEditing" :data="sampleViewGridData" border stripe style="width:100%;" max-height="500">
+              <el-table-column prop="element" label="元素符号" align="center" width="150">
+                <template #default="{ row }"><strong>{{ row.element }}</strong></template>
+              </el-table-column>
+              <el-table-column prop="value" label="标准参考含量值 (%)" align="center" />
+            </el-table>
+            
+            <div v-if="!isSampleEditing && sampleViewGridData.length === 0" style="text-align: center; color: #94a3b8; padding: 40px 0;">
+              该样品暂未录入任何元素的具体参考值，请点击右上角进行编辑。
+            </div>
+
+            <el-table v-if="isSampleEditing" :data="ELEMENTS_ORDER" border stripe size="small" style="width:100%;" max-height="500">
+              <el-table-column label="元素符号" align="center" width="150">
+                <template #default="{ row }"><strong>{{ row }}</strong></template>
+              </el-table-column>
+              <el-table-column label="标准含量输入值 (%)" align="center">
+                <template #default="{ row }">
+                  <el-input v-model="sampleEditFormData[row]" placeholder="未检出 / 不作要求请留空" clearable />
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          
+          <el-empty v-else description="请先在左侧名册中选定某个标准样品以展现数据矩阵"></el-empty>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <el-dialog
       v-model="pdfDialogVisible"
       :title="'原件预览：' + activePdfFile"
@@ -188,9 +279,12 @@
 
 <script setup>
 import { onMounted, ref, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { searchStandards, getStandardDetail, getStandardPdfs, saveStandardDetail } from '../api'
+import { 
+  searchStandards, getStandardDetail, getStandardPdfs, saveStandardDetail,
+  getStandardSamples, getStandardSampleDetail, saveStandardSample, deleteStandardSample
+} from '../api'
 
 const ELEMENTS_ORDER = [
   "Al", "Si", "Cu", "Mg", "Mn", "Ti", "Fe", "Zn", "Ni", "Pb", "Sn",
@@ -198,7 +292,9 @@ const ELEMENTS_ORDER = [
   "Ga", "Hg", "Li", "Mo", "Na", "P", "V"
 ]
 
-// --- PDF 模块相关 ---
+// ==============================================================================
+// 1. PDF 企标原件库逻辑
+// ==============================================================================
 const pdfList = ref([])
 const pdfSearchQuery = ref('')
 const pdfDialogVisible = ref(false)
@@ -213,7 +309,6 @@ const fetchPdfList = async () => {
   }
 }
 
-// 修改点 1：PDF 文件列表应用自然文本和数字混合排序引擎
 const filteredPdfList = computed(() => {
   let list = [...pdfList.value]
   if (pdfSearchQuery.value) {
@@ -221,7 +316,7 @@ const filteredPdfList = computed(() => {
       item.filename.toLowerCase().includes(pdfSearchQuery.value.toLowerCase())
     )
   }
-  // 按照文件名全自动正序排列 (支持自然数比对，使 22 自动排在 3 后面)
+  // 自然文本和数字混合排序引擎 (如 标样22 会排在 标样3 后面)
   return list.sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: 'base' }))
 })
 
@@ -231,7 +326,9 @@ const openPdfViewer = (filename) => {
 }
 
 
-// --- DB 数据与编辑模块相关 ---
+// ==============================================================================
+// 2. 企业标准指标范围配置逻辑
+// ==============================================================================
 const searchBrand = ref('')
 const tableData = ref([])
 const activeBrand = ref('')
@@ -244,12 +341,11 @@ const editFormData = ref({})
 const importJsonDialogVisible = ref(false)
 const jsonInputData = ref('')
 
-// 修改点 2：已有牌号表格请求拉取后，同样在前端进行自然序列正序排列
 const fetchStandards = async () => {
   const { data } = await searchStandards({ brand_name: searchBrand.value })
   const items = data.items || []
   
-  // 按照牌号名称顺序正序排列
+  // 自然序列正序重新排列企业牌号名
   items.sort((a, b) => a.brand_name.localeCompare(b.brand_name, undefined, { numeric: true, sensitivity: 'base' }))
   
   tableData.value = items
@@ -401,9 +497,151 @@ const saveEdit = async () => {
   }
 }
 
+
+// ==============================================================================
+// 3. 新增功能：标准样品自主维护控制流
+// ==============================================================================
+const sampleTableData = ref([])
+const newSampleName = ref('')
+const activeSample = ref('')
+const selectedSampleValues = ref({})
+const isSampleEditing = ref(false)
+const sampleSaving = ref(false)
+const sampleEditFormData = ref({})
+
+// 获取标准样品名册
+const fetchSamples = async () => {
+  try {
+    const { data } = await getStandardSamples()
+    const items = data.items || []
+    // 样品名称应用自然文本序列进行前端正序排列
+    items.sort((a, b) => a.sample_name.localeCompare(b.sample_name, undefined, { numeric: true, sensitivity: 'base' }))
+    sampleTableData.value = items
+  } catch (e) {
+    console.error('拉取标准样品名册失败:', e)
+  }
+}
+
+// 选中样品切换右侧面板数据展示
+const handleSampleRowSelect = async (currentRow) => {
+  if (!currentRow) return
+  activeSample.value = currentRow.sample_name
+  isSampleEditing.value = false
+  
+  try {
+    const { data } = await getStandardSampleDetail({ sample_name: currentRow.sample_name })
+    if (data.success) {
+      selectedSampleValues.value = data.values || {}
+    }
+  } catch (e) {
+    console.error('拉取指定样品元素参考值失效:', e)
+  }
+}
+
+// 过滤非空样品元素标准值以构建表格渲染源
+const sampleViewGridData = computed(() => {
+  if (!selectedSampleValues.value) return []
+  return ELEMENTS_ORDER.filter(el => {
+    const val = selectedSampleValues.value[el]
+    return val !== undefined && val !== null && val !== ''
+  }).map(el => ({
+    element: el,
+    value: selectedSampleValues.value[el]
+  }))
+})
+
+// 添加新样品建档
+const handleAddSample = async () => {
+  const name = newSampleName.value.trim()
+  if (!name) {
+    ElMessage.warning('请输入要创立的标准样品名称或编号')
+    return
+  }
+  if (sampleTableData.value.some(s => s.sample_name.toLowerCase() === name.toLowerCase())) {
+    ElMessage.warning('该标准样品编码已在名册中登记，切勿重复录入')
+    return
+  }
+  
+  try {
+    const { data } = await saveStandardSample({ sample_name: name, elements: {} })
+    if (data.success) {
+      ElMessage.success(`标准样品【${name}】档案建立成功`)
+      newSampleName.value = ''
+      await fetchSamples()
+    }
+  } catch (e) {
+    ElMessage.error('样品登记发生网络调用错误')
+  }
+}
+
+// 移除某个标准样品信息
+const handleDeleteSample = async (row) => {
+  try {
+    await ElMessageBox.confirm(`此操作将永久卸载标准样品【${row.sample_name}】的所有成分指标数据，是否确认？`, '删除警告', {
+      confirmButtonText: '强制删除',
+      cancelButtonText: '容我想想',
+      type: 'warning'
+    })
+    
+    const { data } = await deleteStandardSample({ sample_name: row.sample_name })
+    if (data.success) {
+      ElMessage.success('该标样档案已成功移除')
+      if (activeSample.value === row.sample_name) {
+        activeSample.value = ''
+        selectedSampleValues.value = {}
+        isSampleEditing.value = false
+      }
+      await fetchSamples()
+    }
+  } catch (e) {
+    if (e !== 'cancel') console.error(e)
+  }
+}
+
+// 进入样品指标修改模式
+const enterSampleEditMode = () => {
+  const initData = {}
+  ELEMENTS_ORDER.forEach(el => {
+    initData[el] = selectedSampleValues.value[el] || ''
+  })
+  sampleEditFormData.value = initData
+  isSampleEditing.value = true
+}
+
+const cancelSampleEdit = () => {
+  isSampleEditing.value = false
+}
+
+// 提交样品化学成分录入数据
+const saveSampleEdit = async () => {
+  sampleSaving.value = true
+  try {
+    const payload = {
+      sample_name: activeSample.value,
+      elements: sampleEditFormData.value
+    }
+    const { data } = await saveStandardSample(payload)
+    if (data.success) {
+      ElMessage.success('标准参考值入库成功！')
+      isSampleEditing.value = false
+      
+      // 变动完成后立即刷新最新的详情试图
+      const detailRes = await getStandardSampleDetail({ sample_name: activeSample.value })
+      selectedSampleValues.value = detailRes.data.values || {}
+    }
+  } catch (e) {
+    ElMessage.error('样品指标写入异常')
+  } finally {
+    sampleSaving.value = false
+  }
+}
+
+
+// 生命周期初始化钩子
 onMounted(() => {
   fetchPdfList()
   fetchStandards()
+  fetchSamples() // 页面初始化自动抓取标样列表
 })
 </script>
 

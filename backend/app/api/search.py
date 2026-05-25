@@ -1,14 +1,16 @@
 import re
 import json
 import sqlite3
-from fastapi import APIRouter, Query
-from sqlalchemy import text
-from app.core.database import engine
+from datetime import datetime
 from io import BytesIO
 from typing import List
+from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import openpyxl
+from sqlalchemy import text
+from app.core.database import engine
+from app.core.config import DATA_DIR, BASE_DIR  # 将核心目录配置提取至顶部全局作用域
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -216,13 +218,11 @@ def export_excel(req: ExportRequest):
 
 @router.get("/standards/pdfs")
 def list_standard_pdfs():
-    from app.core.config import BASE_DIR
     pdf_dir = BASE_DIR / "data" / "standards"
     return {"items": [{"filename": p.name} for p in pdf_dir.glob("*.pdf")] if pdf_dir.exists() else []}
 
 @router.get("/standards/pdfs/{filename}")
 def get_standard_pdf_file(filename: str):
-    from app.core.config import BASE_DIR
     file_path = BASE_DIR / "data" / "standards" / filename
     if file_path.exists():
         return FileResponse(str(file_path), media_type="application/pdf")
@@ -240,7 +240,6 @@ def search_standards(brand_name: str = Query("")):
                 for r in rows:
                     if r[0]: brands.add(str(r[0]).strip())
                     
-    from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if db_path.exists():
         with sqlite3.connect(str(db_path)) as conn:
@@ -253,7 +252,6 @@ def search_standards(brand_name: str = Query("")):
 
 @router.get("/standards/detail")
 def get_standard_detail(brand_name: str = Query(...)):
-    from app.core.config import DATA_DIR
     db_path = DATA_DIR / "sqlite" / "standards.db"
     if not db_path.exists(): return {"success": True, "standard": {"tech_req": {}}}
 
@@ -278,8 +276,6 @@ class SaveStandardReq(BaseModel):
 
 @router.post("/standards/save")
 def save_standard_detail(req: SaveStandardReq):
-    from app.core.config import DATA_DIR
-    from datetime import datetime
     db_path = DATA_DIR / "sqlite" / "standards.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(db_path)) as conn:
@@ -292,3 +288,83 @@ def save_standard_detail(req: SaveStandardReq):
             ON CONFLICT(brand_name) DO UPDATE SET tech_req_json = excluded.tech_req_json, updated_at = excluded.updated_at
         """, (req.brand_name, tech_json, now))
     return {"success": True, "message": "保存成功"}
+
+
+# ==============================================================================
+# 新增模块：标准样品管理后端存储与 API 接口
+# ==============================================================================
+
+# 定义标准样品数据库的路径
+SAMPLES_DB_PATH = DATA_DIR / "sqlite" / "standard_samples.db"
+
+def init_samples_db():
+    """初始化标准样品专用 SQLite 数据库"""
+    SAMPLES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS standard_samples (
+                sample_name TEXT PRIMARY KEY,
+                values_json TEXT,
+                updated_at TEXT
+            )
+        """)
+
+# 执行初始化确保新数据库存在
+init_samples_db()
+
+@router.get("/standard-samples")
+def list_standard_samples():
+    """拉取所有已添加的标准样品名册"""
+    init_samples_db()
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT sample_name FROM standard_samples ORDER BY sample_name").fetchall()
+        return {"items": [{"sample_name": r["sample_name"]} for r in rows]}
+
+@router.get("/standard-samples/detail")
+def get_sample_detail(sample_name: str = Query(...)):
+    """获取指定样品的各化学元素标准值"""
+    init_samples_db()
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT values_json FROM standard_samples WHERE sample_name = ?", (sample_name,)).fetchone()
+        if not row:
+            return {"success": True, "values": {}}
+        try:
+            values = json.loads(row["values_json"]) if row["values_json"] else {}
+        except Exception:
+            values = {}
+        return {"success": True, "values": values}
+
+class SaveSampleReq(BaseModel):
+    sample_name: str
+    elements: dict[str, str]  # 结构如: {"Si": "11.5", "Cu": "2.3"}
+
+@router.post("/standard-samples/save")
+def save_sample_detail(req: SaveSampleReq):
+    """保存或更新标准样品的元素对应标准值"""
+    init_samples_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    values_json = json.dumps(req.elements, ensure_ascii=False)
+    
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        conn.execute("""
+            INSERT INTO standard_samples (sample_name, values_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(sample_name) DO UPDATE SET 
+                values_json = excluded.values_json, 
+                updated_at = excluded.updated_at
+        """, (req.sample_name, values_json, now))
+    return {"success": True, "message": "标准样品指标保存成功"}
+
+@router.post("/standard-samples/delete")
+def delete_standard_sample(payload: dict):
+    """根据样品名称移除该标准样品档案"""
+    sample_name = payload.get("sample_name")
+    if not sample_name:
+        return {"success": False, "message": "样品名称不能为空"}
+    
+    init_samples_db()
+    with sqlite3.connect(str(SAMPLES_DB_PATH)) as conn:
+        conn.execute("DELETE FROM standard_samples WHERE sample_name = ?", (sample_name,))
+    return {"success": True, "message": "标准样品已成功移除"}

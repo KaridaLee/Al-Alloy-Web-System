@@ -59,4 +59,12 @@ export const syncAllStandards = () => http.post('/api/import/sync-standards')
 export const getStandardPdfs = () => http.get('/api/search/standards/pdfs')
 export const saveStandardDetail = (data) => http.post('/api/search/standards/save', data)
 
+// ==============================================================================
+// 标准样品管理模块 API
+// ==============================================================================
+export const getStandardSamples = () => axios.get('/api/search/standard-samples')
+export const getStandardSampleDetail = (params) => axios.get('/api/search/standard-samples/detail', { params })
+export const saveStandardSample = (data) => axios.post('/api/search/standard-samples/save', data)
+export const deleteStandardSample = (data) => axios.post('/api/search/standard-samples/delete', data)
+
 export default http
