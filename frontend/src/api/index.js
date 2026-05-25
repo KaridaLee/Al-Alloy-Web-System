@@ -62,13 +62,13 @@ export const saveStandardDetail = (data) => http.post('/api/search/standards/sav
 // ==============================================================================
 // 标准样品管理模块 API
 // ==============================================================================
-export const getStandardSamples = () => axios.get('/api/search/standard-samples')
-export const getStandardSampleDetail = (params) => axios.get('/api/search/standard-samples/detail', { params })
-export const saveStandardSample = (data) => axios.post('/api/search/standard-samples/save', data)
-export const deleteStandardSample = (data) => axios.post('/api/search/standard-samples/delete', data)
+// 修复：将此处的 axios 替换为 http 实例
+export const getStandardSamples = () => http.get('/api/search/standard-samples')
+export const getStandardSampleDetail = (params) => http.get('/api/search/standard-samples/detail', { params })
+export const saveStandardSample = (data) => http.post('/api/search/standard-samples/save', data)
+export const deleteStandardSample = (data) => http.post('/api/search/standard-samples/delete', data)
 
 // === 本次新增 ===
-export const deleteStandardPdf = (data) => axios.post('/api/search/standards/pdfs/delete', data)
-export const renameStandardSample = (data) => axios.post('/api/search/standard-samples/rename', data)
-
-export default http
+// 修复：将此处的 axios 替换为 http 实例
+export const deleteStandardPdf = (data) => http.post('/api/search/standards/pdfs/delete', data)
+export const renameStandardSample = (data) => http.post('/api/search/standard-samples/rename', data)
