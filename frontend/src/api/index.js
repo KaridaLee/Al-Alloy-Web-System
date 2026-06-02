@@ -23,7 +23,6 @@ http.interceptors.response.use(
   },
   (error) => {
     console.error('[HTTP RESPONSE ERROR]', error)
-
     if (error.response) {
       console.error('[HTTP RESPONSE ERROR DATA]', error.response.data)
       console.error('[HTTP RESPONSE STATUS]', error.response.status)
@@ -32,7 +31,6 @@ http.interceptors.response.use(
     } else {
       console.error('[HTTP CONFIG ERROR]', error.message)
     }
-
     return Promise.reject(error)
   }
 )
@@ -58,9 +56,6 @@ export const syncAllStandards = () => http.post('/api/import/sync-standards')
 export const getStandardPdfs = () => http.get('/api/search/standards/pdfs')
 export const saveStandardDetail = (data) => http.post('/api/search/standards/save', data)
 
-// ==============================================================================
-// 标准样品管理模块 API
-// ==============================================================================
 export const getStandardSamples = () => http.get('/api/search/standard-samples')
 export const getStandardSampleDetail = (params) => http.get('/api/search/standard-samples/detail', { params })
 export const saveStandardSample = (data) => http.post('/api/search/standard-samples/save', data)
@@ -68,3 +63,6 @@ export const deleteStandardSample = (data) => http.post('/api/search/standard-sa
 export const deleteStandardPdf = (data) => http.post('/api/search/standards/pdfs/delete', data)
 export const renameStandardSample = (data) => http.post('/api/search/standard-samples/rename', data)
 export const matchStandardSample = (data) => http.post('/api/search/standard-samples/match', data)
+
+// === 本次新增：体系文件管理接口 ===
+export const getSystemDocs = () => http.get('/api/system/docs')

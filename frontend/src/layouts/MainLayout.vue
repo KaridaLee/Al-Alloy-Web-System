@@ -26,6 +26,9 @@
         <el-menu-item index="/standards">
           <span>企业标准</span>
         </el-menu-item>
+        <el-menu-item index="/docs">
+          <span>体系文件</span>
+        </el-menu-item>
         <el-menu-item index="/settings">
           <span>系统设置</span>
         </el-menu-item>
@@ -33,33 +36,28 @@
     </el-aside>
 
     <el-drawer
+      v-if="isMobile"
       v-model="mobileMenuVisible"
-      title="菜单导航"
       direction="ltr"
-      size="260px"
+      size="240px"
       :with-header="false"
-      class="mobile-menu-drawer"
+      style="background:linear-gradient(180deg,#0f172a,#1e293b);"
     >
-      <div style="padding:20px;background:#0f172a;color:#fff;font-weight:700;">
-        铝锭成分台账系统
+      <div style="padding:22px 20px;border-bottom:1px solid rgba(255,255,255,.08); color: #fff;">
+        <div style="font-size:20px;font-weight:800;">铝锭成分台账系统</div>
       </div>
       <el-menu
         router
+        background-color="transparent"
+        text-color="#cbd5e1"
+        active-text-color="#60a5fa"
         :default-active="$route.path"
         @select="mobileMenuVisible = false"
       >
-        <el-menu-item index="/">
-          <span>首页总览</span>
-        </el-menu-item>
-        <el-menu-item index="/search">
-          <span>数据搜索</span>
-        </el-menu-item>
-        <el-menu-item index="/standards">
-          <span>企业标准</span>
-        </el-menu-item>
-        <el-menu-item index="/settings">
-          <span>系统设置</span>
-        </el-menu-item>
+        <el-menu-item index="/"><span>首页总览</span></el-menu-item>
+        <el-menu-item index="/search"><span>数据搜索</span></el-menu-item>
+        <el-menu-item index="/standards"><span>企业标准</span></el-menu-item>
+        <el-menu-item index="/docs"><span>体系文件</span></el-menu-item> <el-menu-item index="/settings"><span>系统设置</span></el-menu-item>
       </el-menu>
     </el-drawer>
 
@@ -82,12 +80,10 @@
           >
             ☰
           </el-button>
-
           <div>
             <div style="font-size:18px;font-weight:700;color:#0f172a;">本地服务控制台</div>
           </div>
         </div>
-
         <el-tag type="success" size="large">运行中</el-tag>
       </el-header>
 
@@ -109,25 +105,16 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 const isMobile = ref(false)
 const mobileMenuVisible = ref(false)
 
-const handleResize = () => {
+const checkMobile = () => {
   isMobile.value = window.innerWidth <= 768
 }
 
 onMounted(() => {
-  handleResize()
-  window.addEventListener('resize', handleResize)
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
-
-<style>
-.mobile-menu-drawer .el-drawer__body {
-  padding: 0 !important;
-}
-.el-menu {
-  border-right: none !important;
-}
-</style>

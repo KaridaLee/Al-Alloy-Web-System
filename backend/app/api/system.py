@@ -1,8 +1,10 @@
 import json
 import shutil
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from urllib.parse import quote
 from app.core.config import SQLITE_PATH, HOST, PORT, BASE_DIR
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -54,15 +56,62 @@ async def upload_file(file: UploadFile = File(...)):
         
     elif fn_lower.endswith('.pdf'):
         dest_dir = BASE_DIR / "data" / "standards"
-        msg_suffix = "已存入企业标准原件库（可在标准管理页面预览）"
-        
+        msg_suffix = "已存入企业标准原件库"
     else:
-        return {"success": False, "message": "仅允许上传 .xlsx 台账数据 或 .pdf 原件"}
-    
+        return {"success": False, "message": "不支持的文件类型"}
+
     dest_dir.mkdir(parents=True, exist_ok=True)
     file_path = dest_dir / filename
-    
-    with file_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+
+    try:
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return {"success": True, "message": f"文件 {filename} 上传成功，{msg_suffix}"}
+    except Exception as e:
+        return {"success": False, "message": f"文件保存失败: {str(e)}"}
+
+# ==============================================================================
+# 新增：体系文件管理模块 API
+# ==============================================================================
+
+@router.get("/docs")
+def list_system_docs():
+    """递归遍历 data/system 目录，拉取所有受支持的文件平铺列表"""
+    docs_dir = BASE_DIR / "data" / "system"
+    if not docs_dir.exists():
+        docs_dir.mkdir(parents=True, exist_ok=True)
         
-    return {"success": True, "message": f"文件 {filename} 上传成功，{msg_suffix}"}
+    allowed_exts = {".pdf", ".doc", ".docx", ".xls", ".xlsx"}
+    items = []
+    
+    for p in docs_dir.rglob("*"):
+        if p.is_file() and p.suffix.lower() in allowed_exts:
+            rel_path = p.relative_to(docs_dir).as_posix()
+            items.append({
+                "filename": p.name,
+                "rel_path": rel_path,
+                "ext": p.suffix.lower()
+            })
+            
+    # 按文件名自然排序
+    items.sort(key=lambda x: x["filename"])
+    return {"success": True, "items": items}
+
+@router.get("/docs/file")
+def get_system_doc_file(path: str = Query(...), download: bool = Query(False)):
+    """获取指定的体系文件（支持直接预览与强制下载机制）"""
+    docs_dir = BASE_DIR / "data" / "system"
+    file_path = (docs_dir / path).resolve()
+    
+    # 路径安全拦截，防止越权遍历漏洞
+    if not str(file_path).startswith(str(docs_dir.resolve())):
+        return {"success": False, "message": "非法的文件路径"}
+        
+    if file_path.exists() and file_path.is_file():
+        headers = {}
+        if download:
+            encoded_name = quote(file_path.name)
+            headers["Content-Disposition"] = f"attachment; filename*=utf-8''{encoded_name}"
+        return FileResponse(str(file_path), headers=headers)
+        
+    return {"success": False, "message": "请求的文件不存在或已被移除"}
