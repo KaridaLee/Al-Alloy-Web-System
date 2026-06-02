@@ -26,7 +26,7 @@
         <el-menu-item index="/standards">
           <span>企业标准</span>
         </el-menu-item>
-        <el-menu-item index="/docs">
+        <el-menu-item index="/system-docs">
           <span>体系文件</span>
         </el-menu-item>
         <el-menu-item index="/settings">
@@ -57,7 +57,8 @@
         <el-menu-item index="/"><span>首页总览</span></el-menu-item>
         <el-menu-item index="/search"><span>数据搜索</span></el-menu-item>
         <el-menu-item index="/standards"><span>企业标准</span></el-menu-item>
-        <el-menu-item index="/docs"><span>体系文件</span></el-menu-item> <el-menu-item index="/settings"><span>系统设置</span></el-menu-item>
+        <el-menu-item index="/system-docs"><span>体系文件</span></el-menu-item>
+        <el-menu-item index="/settings"><span>系统设置</span></el-menu-item>
       </el-menu>
     </el-drawer>
 
