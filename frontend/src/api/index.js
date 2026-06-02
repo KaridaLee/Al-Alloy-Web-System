@@ -64,5 +64,7 @@ export const deleteStandardPdf = (data) => http.post('/api/search/standards/pdfs
 export const renameStandardSample = (data) => http.post('/api/search/standard-samples/rename', data)
 export const matchStandardSample = (data) => http.post('/api/search/standard-samples/match', data)
 
-// === 本次新增：体系文件管理接口 ===
 export const getSystemDocs = () => http.get('/api/system/docs')
+
+// === 本次新增：请求将 Office 转化为网页代码 ===
+export const getSystemDocHtmlPreview = (params) => http.get('/api/system/docs/preview-html', { params })

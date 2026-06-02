@@ -62,32 +62,44 @@
 
     <el-dialog
       v-model="previewVisible"
-      :title="'文件查阅：' + activeDoc.filename"
-      width="75%"
-      top="5vh"
+      :title="'文件阅览：' + activeDoc.filename"
+      width="80%"
+      top="4vh"
       destroy-on-close
+      @closed="clearPreviewData"
     >
-      <div style="height: 75vh; border: 1px solid #e2e8f0; border-radius: 4px; display: flex; flex-direction: column; background: #f8fafc;">
+      <div 
+        style="height: 78vh; border: 1px solid #e2e8f0; border-radius: 4px; display: flex; flex-direction: column; background: #f8fafc; overflow: hidden;"
+        v-loading="previewLoading"
+        element-loading-text="引擎正在解析转换文档中，请稍候..."
+      >
         
         <iframe
-          v-if="activeDoc.ext === '.pdf'"
+          v-if="renderMode === 'pdf'"
           :src="'/api/system/docs/file?path=' + encodeURIComponent(activeDoc.rel_path)"
           width="100%"
           height="100%"
           frameborder="0"
           style="display: block; flex: 1;"
         ></iframe>
+
+        <div 
+          v-else-if="renderMode === 'html'" 
+          style="flex: 1; overflow-y: auto; padding: 10px;"
+          v-html="officeHtmlContent"
+        >
+        </div>
         
-        <div v-else style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
+        <div v-else-if="renderMode === 'unsupported'" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
           <div style="font-size: 64px; margin-bottom: 20px;">📄</div>
           <div style="font-size: 18px; font-weight: bold; color: #334155; margin-bottom: 12px;">
-            当前格式（{{ activeDoc.ext }}）不支持内嵌在线预览
+            系统暂不支持旧版二进制格式（{{ activeDoc.ext }}）的在线解析
           </div>
-          <div style="color: #64748b; margin-bottom: 24px; max-width: 400px;">
-            由于浏览器安全与渲染内核限制，Word 或 Excel 档案需传输至本地机器后使用专业 Office 软件进行阅览。
+          <div style="color: #64748b; margin-bottom: 24px; max-width: 450px; line-height: 1.6;">
+            提示：现代系统已原生支持秒开预览 <b>.xlsx</b> 以及 <b>.docx</b> 格式的文件。<br/>您可以将此旧文件在电脑上“另存为”新版格式后放入目录，即可获得丝滑预览体验。
           </div>
           <el-button type="primary" size="large" @click="handleDownload(activeDoc)">
-            📥 立即下载到本地
+            📥 立即下载到本地查阅
           </el-button>
         </div>
 
@@ -99,14 +111,20 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { getSystemDocs } from '../api'
+import { ElMessage } from 'element-plus'
+import { getSystemDocs, getSystemDocHtmlPreview } from '../api' // 引入新接口
 
 const docsList = ref([])
 const searchQuery = ref('')
 const loading = ref(false)
 
 const previewVisible = ref(false)
+const previewLoading = ref(false)
 const activeDoc = ref({})
+
+// 控制渲染模式：'pdf' | 'html' | 'unsupported' | ''
+const renderMode = ref('')
+const officeHtmlContent = ref('')
 
 // 初始化加载目录全量文件
 const fetchDocs = async () => {
@@ -131,10 +149,43 @@ const filteredDocs = computed(() => {
   return list
 })
 
-// 触发预览操作
-const handlePreview = (row) => {
+// 核心功能：分发预览策略
+const handlePreview = async (row) => {
   activeDoc.value = row
   previewVisible.value = true
+  
+  if (row.ext === '.pdf') {
+    renderMode.value = 'pdf'
+  } 
+  else if (row.ext === '.docx' || row.ext === '.xlsx') {
+    renderMode.value = 'html'
+    previewLoading.value = true
+    try {
+      const { data } = await getSystemDocHtmlPreview({ path: row.rel_path })
+      if (data.success) {
+        officeHtmlContent.value = data.html
+      } else {
+        renderMode.value = 'unsupported'
+        ElMessage.error(data.message || '文档转化引擎解析失败')
+      }
+    } catch (error) {
+      renderMode.value = 'unsupported'
+      ElMessage.error('服务器解析请求超时')
+    } finally {
+      previewLoading.value = false
+    }
+  } 
+  else {
+    // 拦截老旧的 .doc 和 .xls
+    renderMode.value = 'unsupported'
+  }
+}
+
+// 清除状态防止下次打开闪烁
+const clearPreviewData = () => {
+  officeHtmlContent.value = ''
+  renderMode.value = ''
+  activeDoc.value = {}
 }
 
 // 触发强制下载操作
@@ -181,5 +232,10 @@ onMounted(() => {
   font-weight: 700;
   margin-bottom: 20px;
   color: #1e293b;
+}
+
+/* 保护注入 HTML 的样式作用域不会溢出，并且确保内部表格居左展示好看 */
+:deep(.el-dialog__body) {
+  padding: 10px 20px 20px 20px;
 }
 </style>

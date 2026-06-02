@@ -6,6 +6,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from urllib.parse import quote
 from app.core.config import SQLITE_PATH, HOST, PORT, BASE_DIR
+import openpyxl
+
+# 尝试引入 mammoth，如果没有安装则作优雅降级处理
+try:
+    import mammoth
+except ImportError:
+    mammoth = None
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 SETTINGS_FILE = BASE_DIR / "data" / "system_settings.json"
@@ -71,7 +78,7 @@ async def upload_file(file: UploadFile = File(...)):
         return {"success": False, "message": f"文件保存失败: {str(e)}"}
 
 # ==============================================================================
-# 新增：体系文件管理模块 API
+# 体系文件管理模块 API
 # ==============================================================================
 
 @router.get("/docs")
@@ -93,7 +100,6 @@ def list_system_docs():
                 "ext": p.suffix.lower()
             })
             
-    # 按文件名自然排序
     items.sort(key=lambda x: x["filename"])
     return {"success": True, "items": items}
 
@@ -103,7 +109,6 @@ def get_system_doc_file(path: str = Query(...), download: bool = Query(False)):
     docs_dir = BASE_DIR / "data" / "system"
     file_path = (docs_dir / path).resolve()
     
-    # 路径安全拦截，防止越权遍历漏洞
     if not str(file_path).startswith(str(docs_dir.resolve())):
         return {"success": False, "message": "非法的文件路径"}
         
@@ -115,3 +120,65 @@ def get_system_doc_file(path: str = Query(...), download: bool = Query(False)):
         return FileResponse(str(file_path), headers=headers)
         
     return {"success": False, "message": "请求的文件不存在或已被移除"}
+
+# 【新增】智能文件解析预览引擎，将 Office 实时转化为 HTML
+@router.get("/docs/preview-html")
+def get_office_preview(path: str = Query(...)):
+    docs_dir = BASE_DIR / "data" / "system"
+    file_path = (docs_dir / path).resolve()
+    
+    if not str(file_path).startswith(str(docs_dir.resolve())):
+        return {"success": False, "message": "非法的文件路径"}
+    
+    if not file_path.exists() or not file_path.is_file():
+        return {"success": False, "message": "文件不存在"}
+        
+    ext = file_path.suffix.lower()
+    
+    # 1. 动态解析 Word (docx)
+    if ext == '.docx':
+        if not mammoth:
+            return {"success": False, "message": "系统未安装 mammoth 引擎，无法解析 Word，请联系管理员"}
+        try:
+            with open(file_path, "rb") as docx_file:
+                # 转换过程中保留基础的样式结构
+                result = mammoth.convert_to_html(docx_file)
+                html_content = f"<div style='padding: 20px; font-family: sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>{result.value}</div>"
+                return {"success": True, "html": html_content}
+        except Exception as e:
+            return {"success": False, "message": f"Word文档解析失败: {str(e)}"}
+            
+    # 2. 动态解析 Excel (xlsx)
+    elif ext == '.xlsx':
+        try:
+            wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+            html_parts = ["<div style='padding: 16px; font-family: sans-serif; background: #fff;'>"]
+            
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                html_parts.append(f"<h3 style='background:#f1f5f9; padding:10px 16px; margin: 20px 0 10px 0; border-left: 4px solid #3b82f6; color: #1e293b;'>工作表：{sheet_name}</h3>")
+                html_parts.append("<div style='overflow-x:auto; box-shadow: 0 0 0 1px #e2e8f0; border-radius: 6px;'><table style='border-collapse: collapse; width: 100%; text-align: left; font-size: 13px;'>")
+                
+                for idx, row in enumerate(ws.iter_rows(values_only=True)):
+                    # 性能保护：防止超大表格卡死浏览器，最多只展现前200行预览
+                    if idx > 200:
+                        html_parts.append("<tr><td colspan='20' style='padding:12px; color:#64748b; text-align:center; background:#f8fafc;'>... 篇幅限制，仅展示前 200 行用于快速预览 ...</td></tr>")
+                        break
+                        
+                    html_parts.append("<tr>")
+                    for cell_idx, cell in enumerate(row):
+                        val = "" if cell is None else str(cell)
+                        bg_color = "#f8fafc" if idx == 0 else "#ffffff" # 首行表头稍微加深颜色
+                        font_weight = "bold" if idx == 0 else "normal"
+                        html_parts.append(f"<td style='border: 1px solid #e2e8f0; padding: 8px 12px; white-space: nowrap; background: {bg_color}; font-weight: {font_weight};'>{val}</td>")
+                    html_parts.append("</tr>")
+                    
+                html_parts.append("</table></div>")
+            
+            html_parts.append("</div>")
+            wb.close()
+            return {"success": True, "html": "".join(html_parts)}
+        except Exception as e:
+             return {"success": False, "message": f"Excel表格解析失败: {str(e)}"}
+             
+    return {"success": False, "message": "暂不支持该后缀文件的直接渲染"}
