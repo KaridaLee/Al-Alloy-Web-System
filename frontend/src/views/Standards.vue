@@ -26,7 +26,7 @@
         <el-table-column label="操作" width="160" align="center">
           <template #default="{ row }">
             <el-button type="success" link @click="openPdfViewer(row.filename)">查看原件</el-button>
-            <el-button type="danger" link @click="handleDeletePdf(row.filename)">删除</el-button>
+            <el-button v-if="isAdmin" type="danger" link @click="handleDeletePdf(row.filename)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -66,7 +66,7 @@
             max-height="600"
             @current-change="handleRowSelect"
           >
-            <el-table-column prop="brand_name" label="牌号名称 (点击可编辑范围)" />
+            <el-table-column prop="brand_name" label="牌号名称 (点击查看范围)" />
           </el-table>
         </el-card>
       </el-col>
@@ -76,9 +76,9 @@
           <template #header>
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <div style="font-weight:700; color: #1e293b;">
-                {{ activeBrand ? `【${activeBrand}】化学元素内控技术范围要求` : '请在左侧选择牌号进行配置' }}
+                {{ activeBrand ? `【${activeBrand}】化学元素内控技术范围要求` : '请在左侧选择牌号' }}
               </div>
-              <div v-if="activeBrand">
+              <div v-if="activeBrand && isAdmin">
                 <el-button v-if="!isEditing" type="primary" size="small" @click="enterEditMode">
                   编辑范围指标
                 </el-button>
@@ -105,10 +105,10 @@
             </el-table>
             
             <div v-if="!isEditing && viewGridData.length === 0" style="text-align: center; color: #94a3b8; padding: 40px 0;">
-              暂未配置指标，请点击右上角“编辑范围指标”进行填写。
+              暂未配置指标{{ isAdmin ? '，请点击右上角“编辑范围指标”进行填写' : '' }}。
             </div>
 
-            <el-table v-if="isEditing" :data="ELEMENTS_ORDER" border stripe size="small" style="width:100%;" max-height="600">
+            <el-table v-if="isEditing && isAdmin" :data="ELEMENTS_ORDER" border stripe size="small" style="width:100%;" max-height="600">
               <el-table-column label="技术下限" align="center">
                 <template #default="{ row }">
                   <el-input v-model="editFormData[row].tech_min" placeholder="-" clearable />
@@ -149,8 +149,8 @@
         <el-card class="block-card">
           <template #header>
             <div style="display:flex; flex-direction: column; gap: 10px;">
-              <span style="font-weight:700;">标准样品自主建立名册</span>
-              <div style="display:flex; gap: 8px;">
+              <span style="font-weight:700;">标准样品名册</span>
+              <div v-if="isAdmin" style="display:flex; gap: 8px;">
                 <el-input
                   v-model="newSampleName"
                   placeholder="输入新样品编码/名称"
@@ -172,7 +172,7 @@
             @current-change="handleSampleRowSelect"
           >
             <el-table-column prop="sample_name" label="样品名称" />
-            <el-table-column label="操作" width="120" align="center">
+            <el-table-column v-if="isAdmin" label="操作" width="120" align="center">
               <template #default="{ row }">
                 <el-button type="primary" link size="small" @click.stop="handleRenameSample(row)">重命名</el-button>
                 <el-button type="danger" link size="small" @click.stop="handleDeleteSample(row)">删除</el-button>
@@ -187,9 +187,9 @@
           <template #header>
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <div style="font-weight:700; color: #1e293b;">
-                {{ activeSample ? `【${activeSample}】各化学元素含量标准值 (%)` : '请在左侧选择或创建一个标准样品' }}
+                {{ activeSample ? `【${activeSample}】各化学元素含量标准值 (%)` : '请在左侧选择标准样品' }}
               </div>
-              <div v-if="activeSample">
+              <div v-if="activeSample && isAdmin">
                 <el-button v-if="!isSampleEditing" type="primary" size="small" @click="enterSampleEditMode">
                   编辑标准值
                 </el-button>
@@ -212,10 +212,10 @@
             </el-table>
             
             <div v-if="!isSampleEditing && sampleViewGridData.length === 0" style="text-align: center; color: #94a3b8; padding: 40px 0;">
-              该样品暂未录入任何元素的具体参考值，请点击右上角进行编辑。
+              该样品暂未录入任何元素的具体参考值{{ isAdmin ? '，请点击右上角进行编辑' : '' }}。
             </div>
 
-            <el-table v-if="isSampleEditing" :data="ELEMENTS_ORDER" border stripe size="small" style="width:100%;" max-height="500">
+            <el-table v-if="isSampleEditing && isAdmin" :data="ELEMENTS_ORDER" border stripe size="small" style="width:100%;" max-height="500">
               <el-table-column label="元素符号" align="center" width="150">
                 <template #default="{ row }"><strong>{{ row }}</strong></template>
               </el-table-column>
@@ -351,25 +351,19 @@ const ELEMENTS_ORDER = [
   "Ga", "Hg", "Li", "Mo", "Na", "P", "V"
 ]
 
-// ==============================================================================
-// 权限校验拦截逻辑封装
-// ==============================================================================
-const checkAdminAuth = () => {
-  if (sessionStorage.getItem('isAdmin') !== 'true') {
-    ElMessageBox.alert('操作失败：当前无执行权限！该操作属于高危行为，只有登录管理员账号后才可以删除标准档案。', '权限阻断提示', {
-      confirmButtonText: '我知道了',
-      type: 'error'
-    })
-    return false
-  }
-  return true
-}
+// 权限控制状态
+const isAdmin = ref(sessionStorage.getItem('isAdmin') === 'true')
 
-// 动态监听顶栏登录状态变化，以同步刷新当前页面的激活视图
 const syncAdminState = () => {
-  // 可以根据业务扩展更多联动
+  isAdmin.value = sessionStorage.getItem('isAdmin') === 'true'
+  // 如果管理员被注销时正处于编辑状态，则强制退出编辑流
+  if (!isAdmin.value) {
+    isEditing.value = false
+    isSampleEditing.value = false
+  }
 }
 
+// ==============================================================================
 // === PDF 处理 ===
 const pdfList = ref([])
 const pdfSearchQuery = ref('')
@@ -399,8 +393,7 @@ const openPdfViewer = (filename) => {
 }
 
 const handleDeletePdf = async (filename) => {
-  // 核心拦截
-  if (!checkAdminAuth()) return
+  if (!isAdmin.value) return
 
   try {
     await ElMessageBox.confirm(`确定要从服务器彻底删除原件【${filename}】吗？此操作无法恢复。`, '危险操作确认', {
@@ -576,6 +569,7 @@ const sampleViewGridData = computed(() => {
 })
 
 const handleAddSample = async () => {
+  if (!isAdmin.value) return
   const name = newSampleName.value.trim()
   if (!name) return ElMessage.warning('请输入名称')
   if (sampleTableData.value.some(s => s.sample_name.toLowerCase() === name.toLowerCase())) {
@@ -592,6 +586,7 @@ const handleAddSample = async () => {
 }
 
 const handleRenameSample = async (row) => {
+  if (!isAdmin.value) return
   try {
     const { value } = await ElMessageBox.prompt(`当前正在重命名【${row.sample_name}】`, '标准样品重命名', {
       confirmButtonText: '保存更改',
@@ -614,8 +609,7 @@ const handleRenameSample = async (row) => {
 }
 
 const handleDeleteSample = async (row) => {
-  // 核心拦截
-  if (!checkAdminAuth()) return
+  if (!isAdmin.value) return
 
   try {
     await ElMessageBox.confirm(`永久删除样品【${row.sample_name}】的所有记录？`, '警告', { type: 'warning' })
@@ -630,6 +624,32 @@ const handleDeleteSample = async (row) => {
       await fetchSamples()
     }
   } catch (e) {}
+}
+
+const enterSampleEditMode = () => {
+  const initData = {}
+  ELEMENTS_ORDER.forEach(el => initData[el] = selectedSampleValues.value[el] || '')
+  sampleEditFormData.value = initData
+  isSampleEditing.value = true
+}
+
+const cancelSampleEdit = () => isSampleEditing.value = false
+
+const saveSampleEdit = async () => {
+  sampleSaving.value = true
+  try {
+    const { data } = await saveStandardSample({ sample_name: activeSample.value, elements: sampleEditFormData.value })
+    if (data.success) {
+      ElMessage.success('保存成功')
+      isSampleEditing.value = false
+      const detailRes = await getStandardSampleDetail({ sample_name: activeSample.value })
+      selectedSampleValues.value = detailRes.data.values || {}
+    }
+  } catch (e) {
+    ElMessage.error('保存失败')
+  } finally {
+    sampleSaving.value = false
+  }
 }
 
 // === 智能标样匹配处理逻辑 ===

@@ -97,7 +97,6 @@
         
         <div style="display: flex; align-items: center; gap: 12px;">
           <el-tag type="success" size="large" effect="light">运行中</el-tag>
-          
           <div style="width: 1px; height: 16px; background-color: #cbd5e1; margin: 0 4px;"></div>
           
           <el-button 
@@ -110,14 +109,17 @@
             登录管理员
           </el-button>
           
-          <el-dropdown v-else @command="handleUserCommand">
+          <el-dropdown v-else trigger="click" @command="handleUserCommand">
             <span style="cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 600; color: #334155; font-size: 14px; padding: 4px 8px; border-radius: 6px; transition: background 0.2s;">
               <el-avatar :size="24" style="background-color: #3b82f6; font-size: 11px; font-weight: bold;">AD</el-avatar>
               系统管理员
+              <el-icon style="font-size: 12px; margin-left: 2px;"><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-menu-item command="logout">退出安全登录</el-dropdown-menu-item>
+                <el-dropdown-menu-item command="logout">
+                  <span style="color: #ef4444; font-weight: bold;">退出安全登录</span>
+                </el-dropdown-menu-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -170,8 +172,8 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { HomeFilled, Search, Management, Document, Setting } from '@element-plus/icons-vue'
-import { loginAdmin } from '../api' // 引入真实的后端请求接口
+import { HomeFilled, Search, Management, Document, Setting, ArrowDown } from '@element-plus/icons-vue'
+import { loginAdmin } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -201,7 +203,6 @@ const executeLogin = async () => {
   
   logining.value = true
   try {
-    // 调用真实的后端接口，读取系统根目录的 admin_account.json
     const { data } = await loginAdmin(loginForm.value)
     
     if (data.success) {
@@ -232,7 +233,6 @@ const handleUserCommand = (command) => {
   }
 }
 
-// 路由安全哨兵拦截：防止通过敲击浏览器链接越权访问设置页
 watch(() => route.path, (newPath) => {
   if (newPath === '/settings' && !isAdmin.value) {
     ElMessage.error('权限受阻：您未登录管理员，已将其重定向至首页')
@@ -251,7 +251,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* 侧边栏现代化交互胶囊形态样式覆盖 */
 .modern-menu :deep(.el-menu-item) {
   height: 46px;
   line-height: 46px;

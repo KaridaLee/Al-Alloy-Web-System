@@ -22,13 +22,17 @@
 
       <el-table 
         v-loading="loading" 
-        :data="filteredDocs" 
+        :data="paginatedDocs" 
         border 
         stripe 
         style="width:100%;" 
         max-height="650"
       >
-        <el-table-column type="index" label="序号" width="70" align="center" />
+        <el-table-column label="序号" width="70" align="center">
+          <template #default="{ $index }">
+            {{ (currentPage - 1) * pageSize + $index + 1 }}
+          </template>
+        </el-table-column>
         
         <el-table-column prop="filename" label="文件名称" min-width="300" show-overflow-tooltip>
           <template #default="{ row }">
@@ -57,6 +61,16 @@
 
       <div v-if="!loading && filteredDocs.length === 0" style="text-align: center; color: #94a3b8; padding: 40px 0;">
         未能找到匹配的文件记录，请检查检索词或确保存放目录内存在文件。
+      </div>
+
+      <div style="margin-top: 18px; display: flex; justify-content: flex-end;">
+        <el-pagination
+          background
+          layout="total, prev, pager, next, jumper"
+          :total="filteredDocs.length"
+          :page-size="pageSize"
+          v-model:current-page="currentPage"
+        />
       </div>
     </el-card>
 
@@ -109,24 +123,26 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { getSystemDocs, getSystemDocHtmlPreview } from '../api' // 引入新接口
+import { getSystemDocs, getSystemDocHtmlPreview } from '../api'
 
 const docsList = ref([])
 const searchQuery = ref('')
 const loading = ref(false)
 
+// 分页状态管理
+const currentPage = ref(1)
+const pageSize = ref(15)
+
 const previewVisible = ref(false)
 const previewLoading = ref(false)
 const activeDoc = ref({})
 
-// 控制渲染模式：'pdf' | 'html' | 'unsupported' | ''
 const renderMode = ref('')
 const officeHtmlContent = ref('')
 
-// 初始化加载目录全量文件
 const fetchDocs = async () => {
   loading.value = true
   try {
@@ -139,7 +155,7 @@ const fetchDocs = async () => {
   }
 }
 
-// 动态检索过滤
+// 第一层：根据搜索词过滤全量数据
 const filteredDocs = computed(() => {
   let list = [...docsList.value]
   if (searchQuery.value) {
@@ -149,7 +165,18 @@ const filteredDocs = computed(() => {
   return list
 })
 
-// 核心功能：分发预览策略
+// 第二层：根据分页状态截取当前页的数据展示
+const paginatedDocs = computed(() => {
+  const startIndex = (currentPage.value - 1) * pageSize.value
+  const endIndex = startIndex + pageSize.value
+  return filteredDocs.value.slice(startIndex, endIndex)
+})
+
+// 监听搜索词变化，一旦进行搜索，页码强制回归第一页
+watch(searchQuery, () => {
+  currentPage.value = 1
+})
+
 const handlePreview = async (row) => {
   activeDoc.value = row
   previewVisible.value = true
@@ -176,25 +203,21 @@ const handlePreview = async (row) => {
     }
   } 
   else {
-    // 拦截老旧的 .doc 和 .xls
     renderMode.value = 'unsupported'
   }
 }
 
-// 清除状态防止下次打开闪烁
 const clearPreviewData = () => {
   officeHtmlContent.value = ''
   renderMode.value = ''
   activeDoc.value = {}
 }
 
-// 触发强制下载操作
 const handleDownload = (row) => {
   const url = `/api/system/docs/file?path=${encodeURIComponent(row.rel_path)}&download=true`
   window.open(url, '_blank')
 }
 
-// 样式辅助：类型标签颜色映射
 const getTagType = (ext) => {
   if (ext === '.pdf') return 'danger'
   if (['.xls', '.xlsx'].includes(ext)) return 'success'
@@ -202,12 +225,11 @@ const getTagType = (ext) => {
   return 'info'
 }
 
-// 样式辅助：文件名前的小圆点装饰
 const getFileDotStyle = (ext) => {
   let color = '#94a3b8'
-  if (ext === '.pdf') color = '#ef4444' // 红
-  else if (['.xls', '.xlsx'].includes(ext)) color = '#10b981' // 绿
-  else if (['.doc', '.docx'].includes(ext)) color = '#3b82f6' // 蓝
+  if (ext === '.pdf') color = '#ef4444'
+  else if (['.xls', '.xlsx'].includes(ext)) color = '#10b981'
+  else if (['.doc', '.docx'].includes(ext)) color = '#3b82f6'
   
   return {
     display: 'inline-block',
@@ -234,7 +256,6 @@ onMounted(() => {
   color: #1e293b;
 }
 
-/* 保护注入 HTML 的样式作用域不会溢出，并且确保内部表格居左展示好看 */
 :deep(.el-dialog__body) {
   padding: 10px 20px 20px 20px;
 }
