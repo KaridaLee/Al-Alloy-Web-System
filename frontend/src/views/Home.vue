@@ -3,65 +3,55 @@
     <div class="page-title">首页总览</div>
 
     <el-row :gutter="18">
-      <el-col :span="6">
+      <el-col :xs="24" :sm="12" :md="6" style="margin-bottom: 16px;">
         <StatCard title="工作表数量" :value="overview.sheetCount || 0" desc="当前数据库已同步的工作表" cardClass="gradient-card" />
       </el-col>
-      <el-col :span="6">
+      <el-col :xs="24" :sm="12" :md="6" style="margin-bottom: 16px;">
         <StatCard title="总炉数" :value="overview.totalRows || 0" desc="按工作表去重统计后的炉数" cardClass="gradient-card-green" />
       </el-col>
-      <el-col :span="6">
+      <el-col :xs="24" :sm="12" :md="6" style="margin-bottom: 16px;">
         <StatCard title="最近新增" :value="overview.lastSync?.added_count || 0" desc="最近一次同步新增" cardClass="gradient-card-purple" />
       </el-col>
-      <el-col :span="6">
+      <el-col :xs="24" :sm="12" :md="6" style="margin-bottom: 16px;">
         <StatCard title="最近修改" :value="overview.lastSync?.updated_count || 0" desc="最近一次同步修改" cardClass="gradient-card-orange" />
       </el-col>
     </el-row>
 
-    <el-row :gutter="18" style="margin-top:18px;">
-      <el-col :span="12">
+    <el-row :gutter="18" style="margin-top:2px;">
+      <el-col :xs="24" :md="12" style="margin-bottom: 16px;">
         <el-card class="block-card">
           <template #header>
             <div style="font-weight:700;">牌号数据量</div>
           </template>
-          <div ref="sheetChartRef" style="height:300px;"></div>
+          <div ref="brandChartRef" style="height: 300px;"></div>
         </el-card>
       </el-col>
-
-      <el-col :span="12">
+      <el-col :xs="24" :md="12" style="margin-bottom: 16px;">
         <el-card class="block-card">
           <template #header>
-            <div style="font-weight:700;">牌号分布</div>
+            <div style="font-weight:700;">工作表数据量分布</div>
           </template>
-          <div ref="brandChartRef" style="height:300px;"></div>
+          <div ref="sheetChartRef" style="height: 300px;"></div>
         </el-card>
       </el-col>
     </el-row>
 
-    <el-row :gutter="18" style="margin-top:18px;">
-      <el-col :span="12" v-for="(item, index) in trendModules" :key="index" style="margin-bottom:18px;">
+    <div style="font-size: 18px; font-weight: 700; margin-top: 12px; margin-bottom: 12px; color: #1e293b;">
+      近期各牌号关键元素波动趋势 (轮播)
+    </div>
+
+    <el-row :gutter="18">
+      <el-col :xs="24" :md="8" v-for="(module, index) in trendModules" :key="index" style="margin-bottom: 16px;">
         <el-card class="block-card">
           <template #header>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <div style="font-weight:700;">
-                {{ item.selectedBrand || ('趋势轮播 - 模块 ' + (index + 1)) }}
-              </div>
-              <el-select 
-                v-model="item.selectedBrand" 
-                placeholder="请选择牌号" 
-                size="small" 
-                style="width: 150px"
-                @change="handleBrandChange(index)"
-              >
-                <el-option 
-                  v-for="b in overview.brandStats" 
-                  :key="b.name" 
-                  :label="b.name" 
-                  :value="b.name" 
-                />
-              </el-select>
+              <span style="font-weight:700;">{{ module.brand }} 波动趋势</span>
+              <el-tag size="small" type="info">
+                当前: {{ module.data?.elements?.[module.currentElementIdx] || '-' }}
+              </el-tag>
             </div>
           </template>
-          <div :ref="el => trendChartRefs[index] = el" style="height:300px;"></div>
+          <div :ref="el => trendChartRefs[index] = el" style="height: 250px;"></div>
         </el-card>
       </el-col>
     </el-row>
@@ -69,7 +59,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, reactive } from 'vue'
+import { onMounted, ref, onBeforeUnmount, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import StatCard from '../components/StatCard.vue'
 import { getOverview, getBrandTrends } from '../api'
@@ -77,166 +67,90 @@ import { getOverview, getBrandTrends } from '../api'
 const overview = ref({})
 const sheetChartRef = ref(null)
 const brandChartRef = ref(null)
-const trendChartRefs = ref([])
-
 let sheetChartInstance = null
 let brandChartInstance = null
-const trendChartInstances = [null, null, null, null]
-const trendIntervals = [null, null, null, null]
 
-// 工作表柱状图轮播控制参数
-const SHEET_PAGE_SIZE = 10
-const SHEET_SWITCH_INTERVAL = 5000
-let currentSheetPage = 0
-let sheetChartInterval = null
-
-// 4个模块的状态
-const trendModules = reactive([
-  { selectedBrand: '', currentElementIdx: 0, data: null },
-  { selectedBrand: '', currentElementIdx: 0, data: null },
-  { selectedBrand: '', currentElementIdx: 0, data: null },
-  { selectedBrand: '', currentElementIdx: 0, data: null }
+const trendModules = ref([
+  { brand: 'JZJL-ADC12', data: null, currentElementIdx: 0, chartInstance: null },
+  { brand: 'JZJL-A380', data: null, currentElementIdx: 0, chartInstance: null },
+  { brand: 'JZJL-AlSi9Cu3', data: null, currentElementIdx: 0, chartInstance: null }
 ])
+const trendChartRefs = ref([])
+const trendIntervals = []
 
 const loadData = async () => {
   const { data } = await getOverview()
   overview.value = data
-  
-  if (data.brandStats && data.brandStats.length > 0) {
-    for (let i = 0; i < 4; i++) {
-      if (!trendModules[i].selectedBrand) {
-        const brandObj = data.brandStats[i % data.brandStats.length]
-        trendModules[i].selectedBrand = brandObj.name
-        handleBrandChange(i)
-      }
-    }
-  }
 
-  await renderBaseCharts()
-}
-
-// 渲染工作表当前分页的数据
-const renderSheetChartPage = () => {
-  if (!sheetChartInstance || !overview.value.sheetStats) return
-  const allStats = overview.value.sheetStats
-  const total = allStats.length
-  const totalPages = Math.ceil(total / SHEET_PAGE_SIZE) || 1
-  
-  if (currentSheetPage >= totalPages) currentSheetPage = 0
-  
-  const start = currentSheetPage * SHEET_PAGE_SIZE
-  const end = Math.min(start + SHEET_PAGE_SIZE, total)
-  const pageData = allStats.slice(start, end)
-  
-  sheetChartInstance.setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 45, right: 20, top: 30, bottom: 60 },
-    xAxis: { 
-      type: 'category', 
-      data: pageData.map(i => i.sheetName), 
-      axisLabel: { rotate: 25, fontSize: 10, interval: 0 } 
-    },
-    yAxis: { type: 'value' },
-    series: [{ 
-      type: 'bar', 
-      barMaxWidth: 24, // 限制柱子的最大宽度，使其变细
-      data: pageData.map(i => i.rowCount), 
-      itemStyle: { 
-        color: '#3b82f6',
-        borderRadius: [4, 4, 0, 0] // 顶部增加一点圆角让界面更美观
-      } 
-    }]
-  }, true)
-}
-
-// 启动工作表数据量柱状图的轮播任务
-const startSheetChartCarousel = () => {
-  if (sheetChartInterval) clearInterval(sheetChartInterval)
-  sheetChartInterval = setInterval(() => {
-    if (!overview.value.sheetStats || overview.value.sheetStats.length <= SHEET_PAGE_SIZE) return
-    const totalPages = Math.ceil(overview.value.sheetStats.length / SHEET_PAGE_SIZE)
-    currentSheetPage = (currentSheetPage + 1) % totalPages
-    renderSheetChartPage()
-  }, SHEET_SWITCH_INTERVAL)
-}
-
-const renderBaseCharts = async () => {
   await nextTick()
-  if (sheetChartRef.value) {
-    sheetChartInstance = echarts.init(sheetChartRef.value)
-    currentSheetPage = 0
-    renderSheetChartPage()
-    startSheetChartCarousel()
-  }
-  if (brandChartRef.value) {
-    brandChartInstance = echarts.init(brandChartRef.value)
-    brandChartInstance.setOption({
-      tooltip: { trigger: 'item' },
-      series: [{ type: 'pie', radius: ['40%', '70%'], data: (overview.value.brandStats || []).map(i => ({ name: i.name, value: i.count })) }]
-    })
+  initSheetChart(data.sheetStats)
+  initBrandChart(data.brandStats)
+
+  for (let i = 0; i < trendModules.value.length; i++) {
+    const res = await getBrandTrends(trendModules.value[i].brand)
+    if (res.data.success) {
+      trendModules.value[i].data = res.data
+      renderTrendChart(i)
+      startTrendCarousel(i)
+    }
   }
 }
 
-const handleBrandChange = async (index) => {
-  const module = trendModules[index]
-  if (!module.selectedBrand) return
+const initSheetChart = (stats) => {
+  sheetChartInstance = echarts.init(sheetChartRef.value)
+  sheetChartInstance.setOption({
+    tooltip: { trigger: 'item' },
+    series: [{
+      type: 'pie',
+      radius: ['40%', '70%'],
+      itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 2 },
+      data: stats.map(s => ({ name: s.sheet_name, value: s.count }))
+    }]
+  })
+}
 
-  if (trendIntervals[index]) clearInterval(trendIntervals[index])
-
-  try {
-    const { data } = await getBrandTrends(module.selectedBrand)
-    module.data = data
-    module.currentElementIdx = 0
-    
-    await nextTick()
-    if (!trendChartInstances[index]) {
-      trendChartInstances[index] = echarts.init(trendChartRefs.value[index])
-    }
-    
-    renderTrendChart(index)
-    startTrendCarousel(index)
-  } catch (error) {
-    console.error('获取趋势数据失败:', error)
-  }
+const initBrandChart = (stats) => {
+  brandChartInstance = echarts.init(brandChartRef.value)
+  const keys = Object.keys(stats)
+  const vals = Object.values(stats)
+  brandChartInstance.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: keys, axisLabel: { interval: 0, rotate: 30 } },
+    yAxis: { type: 'value' },
+    series: [{
+      type: 'bar',
+      data: vals,
+      itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] }
+    }]
+  })
 }
 
 const renderTrendChart = (index) => {
-  const instance = trendChartInstances[index]
-  const module = trendModules[index]
-  if (!instance || !module.data || !module.data.elements || module.data.elements.length === 0) return
+  const module = trendModules.value[index]
+  const dom = trendChartRefs.value[index]
+  if (!dom || !module.data || module.data.elements.length === 0) return
+
+  if (!module.chartInstance) {
+    module.chartInstance = echarts.init(dom)
+  }
 
   const element = module.data.elements[module.currentElementIdx]
   const values = module.data.trends[element]
 
-  instance.setOption({
-    title: {
-      text: `当前轮播元素: ${element}`,
-      left: 'center',
-      textStyle: { fontSize: 13, color: '#94a3b8', fontWeight: 'normal' }
-    },
-    tooltip: { trigger: 'axis' },
-    grid: { left: 45, right: 20, top: 50, bottom: 40 },
-    xAxis: {
-      type: 'category',
-      data: module.data.furnace_nos,
-      name: '炉号',
-      nameLocation: 'end',
-      axisLabel: { fontSize: 10, rotate: 30 }
-    },
+  module.chartInstance.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: module.data.furnaces, show: false },
     yAxis: { 
       type: 'value', 
       scale: true,
-      splitLine: { lineStyle: { type: 'dashed', color: '#f1f5f9' } },
-      // 动态调整 Y 轴上下限，避免折线图波动过大
       min: (value) => {
         const range = value.max - value.min
-        if (range === 0) return value.min === 0 ? 0 : Number((value.min * 0.7).toFixed(4))
-        const minVal = value.min - range * 0.3
-        return minVal < 0 ? 0 : Number(minVal.toFixed(4)) // 化学元素含量通常不为负数
+        return Number((value.min - range * 0.3).toFixed(4))
       },
       max: (value) => {
         const range = value.max - value.min
-        if (range === 0) return value.max === 0 ? 0.1 : Number((value.max * 1.3).toFixed(4))
         return Number((value.max + range * 0.3).toFixed(4))
       }
     },
@@ -259,7 +173,7 @@ const renderTrendChart = (index) => {
 
 const startTrendCarousel = (index) => {
   trendIntervals[index] = setInterval(() => {
-    const module = trendModules[index]
+    const module = trendModules.value[index]
     if (module.data && module.data.elements && module.data.elements.length > 0) {
       module.currentElementIdx = (module.currentElementIdx + 1) % module.data.elements.length
       renderTrendChart(index)
@@ -267,30 +181,32 @@ const startTrendCarousel = (index) => {
   }, 5000)
 }
 
-onMounted(loadData)
+// 监听窗口大小变化以重绘 Echarts
+const handleResize = () => {
+  if (sheetChartInstance) sheetChartInstance.resize()
+  if (brandChartInstance) brandChartInstance.resize()
+  trendModules.value.forEach(m => {
+    if (m.chartInstance) m.chartInstance.resize()
+  })
+}
+
+onMounted(() => {
+  loadData()
+  window.addEventListener('resize', handleResize)
+})
 
 onBeforeUnmount(() => {
   if (sheetChartInstance) sheetChartInstance.dispose()
   if (brandChartInstance) brandChartInstance.dispose()
-  if (sheetChartInterval) clearInterval(sheetChartInterval)
-  trendChartInstances.forEach(ins => ins && ins.dispose())
-  trendIntervals.forEach(inv => inv && clearInterval(inv))
+  trendModules.value.forEach(m => {
+    if (m.chartInstance) m.chartInstance.dispose()
+  })
+  trendIntervals.forEach(t => clearInterval(t))
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
 <style scoped>
-.block-card {
-  border-radius: 12px;
-  transition: all 0.3s;
-}
-.block-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0,0,0,0.05);
-}
-.page-title {
-  font-size: 20px;
-  font-weight: 700;
-  margin-bottom: 20px;
-  color: #1e293b;
-}
+.block-card { border-radius: 12px; }
+.page-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; color: #1e293b; }
 </style>
