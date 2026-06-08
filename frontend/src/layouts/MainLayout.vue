@@ -117,9 +117,9 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-menu-item command="logout">
+                <el-dropdown-item command="logout">
                   <span style="color: #ef4444; font-weight: bold;">退出安全登录</span>
-                </el-dropdown-menu-item>
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
