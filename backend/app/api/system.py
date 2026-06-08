@@ -8,7 +8,6 @@ from urllib.parse import quote
 from app.core.config import SQLITE_PATH, HOST, PORT, BASE_DIR
 import openpyxl
 
-# 尝试引入 mammoth，如果没有安装则作优雅降级处理
 try:
     import mammoth
 except ImportError:
@@ -16,6 +15,35 @@ except ImportError:
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 SETTINGS_FILE = BASE_DIR / "data" / "system_settings.json"
+
+# ==============================================================================
+# 新增：管理员账号配置文件逻辑
+# ==============================================================================
+ADMIN_FILE = BASE_DIR / "admin_account.json"
+
+def get_admin_credentials():
+    # 如果根目录没有这个文件，就自动创建并写入初始账号密码
+    if not ADMIN_FILE.exists():
+        default_creds = {"username": "admin", "password": "liqi030530"}
+        ADMIN_FILE.write_text(json.dumps(default_creds, ensure_ascii=False, indent=2), encoding="utf-8")
+        return default_creds
+    try:
+        return json.loads(ADMIN_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"username": "admin", "password": "liqi030530"}
+
+class LoginPayload(BaseModel):
+    username: str
+    password: str
+
+@router.post("/login")
+def login_admin(payload: LoginPayload):
+    creds = get_admin_credentials()
+    if payload.username == creds.get("username") and payload.password == creds.get("password"):
+        return {"success": True, "message": "管理员验证成功"}
+    return {"success": False, "message": "账号或密码错误，请检查！"}
+
+# ==============================================================================
 
 class SettingsPayload(BaseModel):
     sourceDir: str = "data/source"
@@ -77,13 +105,9 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         return {"success": False, "message": f"文件保存失败: {str(e)}"}
 
-# ==============================================================================
-# 体系文件管理模块 API
-# ==============================================================================
 
 @router.get("/docs")
 def list_system_docs():
-    """递归遍历 data/system 目录，拉取所有受支持的文件平铺列表"""
     docs_dir = BASE_DIR / "data" / "system"
     if not docs_dir.exists():
         docs_dir.mkdir(parents=True, exist_ok=True)
@@ -105,7 +129,6 @@ def list_system_docs():
 
 @router.get("/docs/file")
 def get_system_doc_file(path: str = Query(...), download: bool = Query(False)):
-    """获取指定的体系文件（支持直接预览与强制下载机制）"""
     docs_dir = BASE_DIR / "data" / "system"
     file_path = (docs_dir / path).resolve()
     
@@ -121,7 +144,6 @@ def get_system_doc_file(path: str = Query(...), download: bool = Query(False)):
         
     return {"success": False, "message": "请求的文件不存在或已被移除"}
 
-# 【新增】智能文件解析预览引擎，将 Office 实时转化为 HTML
 @router.get("/docs/preview-html")
 def get_office_preview(path: str = Query(...)):
     docs_dir = BASE_DIR / "data" / "system"
@@ -135,20 +157,17 @@ def get_office_preview(path: str = Query(...)):
         
     ext = file_path.suffix.lower()
     
-    # 1. 动态解析 Word (docx)
     if ext == '.docx':
         if not mammoth:
             return {"success": False, "message": "系统未安装 mammoth 引擎，无法解析 Word，请联系管理员"}
         try:
             with open(file_path, "rb") as docx_file:
-                # 转换过程中保留基础的样式结构
                 result = mammoth.convert_to_html(docx_file)
                 html_content = f"<div style='padding: 20px; font-family: sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>{result.value}</div>"
                 return {"success": True, "html": html_content}
         except Exception as e:
             return {"success": False, "message": f"Word文档解析失败: {str(e)}"}
             
-    # 2. 动态解析 Excel (xlsx)
     elif ext == '.xlsx':
         try:
             wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
@@ -160,7 +179,6 @@ def get_office_preview(path: str = Query(...)):
                 html_parts.append("<div style='overflow-x:auto; box-shadow: 0 0 0 1px #e2e8f0; border-radius: 6px;'><table style='border-collapse: collapse; width: 100%; text-align: left; font-size: 13px;'>")
                 
                 for idx, row in enumerate(ws.iter_rows(values_only=True)):
-                    # 性能保护：防止超大表格卡死浏览器，最多只展现前200行预览
                     if idx > 200:
                         html_parts.append("<tr><td colspan='20' style='padding:12px; color:#64748b; text-align:center; background:#f8fafc;'>... 篇幅限制，仅展示前 200 行用于快速预览 ...</td></tr>")
                         break
@@ -168,7 +186,7 @@ def get_office_preview(path: str = Query(...)):
                     html_parts.append("<tr>")
                     for cell_idx, cell in enumerate(row):
                         val = "" if cell is None else str(cell)
-                        bg_color = "#f8fafc" if idx == 0 else "#ffffff" # 首行表头稍微加深颜色
+                        bg_color = "#f8fafc" if idx == 0 else "#ffffff"
                         font_weight = "bold" if idx == 0 else "normal"
                         html_parts.append(f"<td style='border: 1px solid #e2e8f0; padding: 8px 12px; white-space: nowrap; background: {bg_color}; font-weight: {font_weight};'>{val}</td>")
                     html_parts.append("</tr>")

@@ -65,6 +65,7 @@ export const renameStandardSample = (data) => http.post('/api/search/standard-sa
 export const matchStandardSample = (data) => http.post('/api/search/standard-samples/match', data)
 
 export const getSystemDocs = () => http.get('/api/system/docs')
-
-// === 本次新增：请求将 Office 转化为网页代码 ===
 export const getSystemDocHtmlPreview = (params) => http.get('/api/system/docs/preview-html', { params })
+
+// === 本次新增：管理员登录接口 ===
+export const loginAdmin = (data) => http.post('/api/system/login', data)

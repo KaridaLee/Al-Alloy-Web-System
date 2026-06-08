@@ -336,13 +336,13 @@
 </template>
 
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Delete } from '@element-plus/icons-vue' // 新引入了 Delete 图标
+import { Search, Delete } from '@element-plus/icons-vue'
 import { 
   searchStandards, getStandardDetail, getStandardPdfs, saveStandardDetail,
   getStandardSamples, getStandardSampleDetail, saveStandardSample, deleteStandardSample,
-  deleteStandardPdf, renameStandardSample, matchStandardSample // 引入智能匹配 API
+  deleteStandardPdf, renameStandardSample, matchStandardSample
 } from '../api'
 
 const ELEMENTS_ORDER = [
@@ -350,6 +350,25 @@ const ELEMENTS_ORDER = [
   "Sr", "Zr", "Cr", "Ca", "Sb", "Cd", "As", "B", "Be", "Bi", "Co",
   "Ga", "Hg", "Li", "Mo", "Na", "P", "V"
 ]
+
+// ==============================================================================
+// 权限校验拦截逻辑封装
+// ==============================================================================
+const checkAdminAuth = () => {
+  if (sessionStorage.getItem('isAdmin') !== 'true') {
+    ElMessageBox.alert('操作失败：当前无执行权限！该操作属于高危行为，只有登录管理员账号后才可以删除标准档案。', '权限阻断提示', {
+      confirmButtonText: '我知道了',
+      type: 'error'
+    })
+    return false
+  }
+  return true
+}
+
+// 动态监听顶栏登录状态变化，以同步刷新当前页面的激活视图
+const syncAdminState = () => {
+  // 可以根据业务扩展更多联动
+}
 
 // === PDF 处理 ===
 const pdfList = ref([])
@@ -380,6 +399,9 @@ const openPdfViewer = (filename) => {
 }
 
 const handleDeletePdf = async (filename) => {
+  // 核心拦截
+  if (!checkAdminAuth()) return
+
   try {
     await ElMessageBox.confirm(`确定要从服务器彻底删除原件【${filename}】吗？此操作无法恢复。`, '危险操作确认', {
       confirmButtonText: '确定删除',
@@ -592,6 +614,9 @@ const handleRenameSample = async (row) => {
 }
 
 const handleDeleteSample = async (row) => {
+  // 核心拦截
+  if (!checkAdminAuth()) return
+
   try {
     await ElMessageBox.confirm(`永久删除样品【${row.sample_name}】的所有记录？`, '警告', { type: 'warning' })
     const { data } = await deleteStandardSample({ sample_name: row.sample_name })
@@ -605,32 +630,6 @@ const handleDeleteSample = async (row) => {
       await fetchSamples()
     }
   } catch (e) {}
-}
-
-const enterSampleEditMode = () => {
-  const initData = {}
-  ELEMENTS_ORDER.forEach(el => initData[el] = selectedSampleValues.value[el] || '')
-  sampleEditFormData.value = initData
-  isSampleEditing.value = true
-}
-
-const cancelSampleEdit = () => isSampleEditing.value = false
-
-const saveSampleEdit = async () => {
-  sampleSaving.value = true
-  try {
-    const { data } = await saveStandardSample({ sample_name: activeSample.value, elements: sampleEditFormData.value })
-    if (data.success) {
-      ElMessage.success('保存成功')
-      isSampleEditing.value = false
-      const detailRes = await getStandardSampleDetail({ sample_name: activeSample.value })
-      selectedSampleValues.value = detailRes.data.values || {}
-    }
-  } catch (e) {
-    ElMessage.error('保存失败')
-  } finally {
-    sampleSaving.value = false
-  }
 }
 
 // === 智能标样匹配处理逻辑 ===
@@ -696,6 +695,11 @@ onMounted(() => {
   fetchPdfList()
   fetchStandards()
   fetchSamples()
+  window.addEventListener('admin-state-changed', syncAdminState)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('admin-state-changed', syncAdminState)
 })
 </script>
 
